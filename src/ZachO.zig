@@ -5,6 +5,7 @@ const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
 const macho = std.macho;
+const machoext = @import("machoext.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -18,16 +19,17 @@ load_commands: std.ArrayListUnmanaged(LoadCommand) = .{},
 
 /// Data
 data: std.ArrayListUnmanaged(u8) = .{},
-file_data_offset: ?u64 = null,
 
 const LoadCommand = union(enum) {
     Unknown: UnknownCommand,
     Segment: SegmentCommand,
+    CodeSignature: CodeSignatureCommand,
 
     pub fn format(self: LoadCommand, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
             .Unknown => |x| return writer.print("{}", .{x}),
             .Segment => |x| return writer.print("{}", .{x}),
+            .CodeSignature => |x| return writer.print("{}", .{x}),
         }
     }
 };
@@ -110,6 +112,26 @@ const SegmentCommand = struct {
     fn formatSection(section: macho.section_64, writer: anytype) !void {}
 };
 
+const CodeSignatureCommand = struct {
+    dataoff: u32,
+    datasize: u32,
+
+    pub fn cmdsize(self: CodeSignatureCommand) u32 {
+        return @sizeOf(macho.load_command) + @sizeOf(u32) * 2;
+    }
+
+    pub fn format(self: CodeSignatureCommand, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("Load command {{\n", .{});
+        try writer.print("  Command: LC_CODE_SIGNATURE\n", .{});
+        try writer.print("  Command size: {}\n", .{self.cmdsize()});
+        try writer.print("  Data offset: {}\n", .{self.dataoff});
+        try writer.print("  Data size: {}\n", .{self.datasize});
+        try writer.print("}}\n", .{});
+    }
+
+    pub fn deinit(self: *CodeSignatureCommand, alloc: *Allocator) void {}
+};
+
 pub fn init(alloc: *Allocator) ZachO {
     return .{
         .alloc = alloc,
@@ -125,14 +147,10 @@ pub fn parse(self: *ZachO, stream: *io.StreamSource) !void {
         try self.parseCommand(stream);
     }
 
-    const pos = try stream.getPos();
-    const end_pos = try stream.getEndPos();
-    const remaining = end_pos - pos;
-
-    self.file_data_offset = pos;
-
-    var data = try std.ArrayList(u8).initCapacity(self.alloc, remaining);
-    try stream.reader().readAllArrayList(&data, remaining);
+    try stream.seekTo(0);
+    const file_size = try stream.getEndPos();
+    var data = try std.ArrayList(u8).initCapacity(self.alloc, file_size);
+    try stream.reader().readAllArrayList(&data, file_size);
     self.data = data.toUnmanaged();
 }
 
@@ -147,6 +165,7 @@ pub fn parseFile(self: *ZachO, pathname: []const u8) !void {
 pub fn deinit(self: *ZachO) void {
     for (self.load_commands.items) |*cmd| {
         switch (cmd.*) {
+            .CodeSignature => |*x| x.deinit(self.alloc),
             .Segment => |*x| x.deinit(self.alloc),
             .Unknown => |*x| x.deinit(self.alloc),
         }
@@ -169,6 +188,7 @@ pub fn format(self: ZachO, comptime fmt: []const u8, options: std.fmt.FormatOpti
     for (self.load_commands.items) |cmd| {
         switch (cmd) {
             .Segment => |seg| try self.formatData(seg, writer),
+            .CodeSignature => |csig| try self.formatCodeSignatureData(csig, writer),
             else => {},
         }
     }
@@ -200,6 +220,16 @@ fn parseCommand(self: *ZachO, stream: *io.StreamSource) !void {
 
             try self.load_commands.append(self.alloc, .{
                 .Segment = segment,
+            });
+        },
+        machoext.LC_CODE_SIGNATURE => {
+            const raw_cmd = try stream.reader().readStruct(machoext.code_signature);
+            var code_sig: CodeSignatureCommand = .{
+                .dataoff = raw_cmd.dataoff,
+                .datasize = raw_cmd.datasize,
+            };
+            try self.load_commands.append(self.alloc, .{
+                .CodeSignature = code_sig,
             });
         },
         else => {
@@ -250,6 +280,38 @@ fn formatData(self: ZachO, seg: SegmentCommand, writer: anytype) !void {
         try writer.print("  {},{}\n", .{ sect.segname, sect.sectname });
         try writer.print("  file = {{ {}, {} }}\n", .{ file_start, file_end });
         try writer.print("  address = {{ 0x{x:0<16}, 0x{x:0<16} }}\n\n", .{ addr_start, addr_end });
-        try writer.print("  0x{x}\n\n", .{self.data.items[file_start - self.file_data_offset.? .. file_end - self.file_data_offset.?]});
+        try formatBinaryBlob(self.data.items[file_start..file_end], writer);
+        try writer.print("\n", .{});
+    }
+}
+
+fn formatCodeSignatureData(self: ZachO, csig: CodeSignatureCommand, writer: anytype) !void {
+    const start_pos = csig.dataoff;
+    const end_pos = csig.dataoff + csig.datasize;
+
+    if (end_pos == start_pos) return;
+
+    try writer.print("Code signature data:\n", .{});
+    try writer.print("file = {{ {}, {} }}\n\n", .{ start_pos, end_pos });
+    try formatBinaryBlob(self.data.items[start_pos..end_pos], writer);
+    try writer.print("\n", .{});
+}
+
+fn formatBinaryBlob(blob: []const u8, writer: anytype) !void {
+    // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
+    // xxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxx  xxxxxxxx
+    var i: usize = 0;
+    const step = 16;
+    while (i <= blob.len) : (i += step) {
+        if (blob[i..].len < step / 2) {
+            try writer.print("{x:<033}  {e}\n", .{ blob[i..], blob[i..] });
+            continue;
+        }
+        const rem = std.math.min(blob[i..].len, step);
+        try writer.print("{x:<016} {x:<016}  {e}\n", .{
+            blob[i .. i + rem / 2],
+            blob[i + rem / 2 .. i + rem],
+            blob[i .. i + rem],
+        });
     }
 }
