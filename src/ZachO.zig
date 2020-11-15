@@ -124,8 +124,7 @@ fn formatData(self: ZachO, segment_command: SegmentCommand, writer: anytype) !vo
     }
 }
 
-fn formatCodeSignatureData(self: ZachO, codesig_command: CodeSignatureCommand, writer: anytype) !void {
-    const csig = &codesig_command.inner;
+fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, writer: anytype) !void {
     const start_pos = csig.dataoff;
     const end_pos = csig.dataoff + csig.datasize;
 
@@ -252,4 +251,8 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
             blob[i .. i + rem],
         });
     }
+}
+
+test "" {
+    std.testing.refAllDecls(@This());
 }
