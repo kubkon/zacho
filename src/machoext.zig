@@ -1,6 +1,6 @@
 pub const LC_CODE_SIGNATURE: u32 = 0x1D;
 
-pub const code_signature = extern struct {
+pub const code_signature_command = extern struct {
     cmd: u32,
     cmdsize: u32,
     dataoff: u32,
