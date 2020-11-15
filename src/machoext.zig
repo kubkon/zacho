@@ -1,10 +1,23 @@
 pub const LC_CODE_SIGNATURE: u32 = 0x1D;
 
-pub const code_signature_command = extern struct {
+pub const version_min_command = extern struct {
     cmd: u32,
     cmdsize: u32,
-    dataoff: u32,
-    datasize: u32,
+    version: u32,
+    sdk: u32,
+};
+
+pub const source_version_command = extern struct {
+    cmd: u32,
+    cmdsize: u32,
+    version: u64,
+};
+
+pub const entry_point_command = extern struct {
+    cmd: u32,
+    cmdsize: u32,
+    entryoff: u64,
+    stacksize: u64,
 };
 
 /// single Requirement blob 
