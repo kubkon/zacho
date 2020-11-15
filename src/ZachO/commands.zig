@@ -92,8 +92,8 @@ pub const SegmentCommand = struct {
     }
 
     pub fn format(self: SegmentCommand, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Load command {{\n", .{});
-        try writer.print("  Command: LC_SEGMENT_64(0x{x})\n", .{self.inner.cmd});
+        try writer.print("Segment command\n", .{});
+        try writer.print("  Command ID: LC_SEGMENT_64(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
         try writer.print("  Segment name: {}\n", .{self.inner.segname});
         try writer.print("  VM address: 0x{x:0<16}\n", .{self.inner.vmaddr});
@@ -103,13 +103,16 @@ pub const SegmentCommand = struct {
         try writer.print("  Maximum VM protection: 0x{x}\n", .{self.inner.maxprot});
         try writer.print("  Initial VM protection: 0x{x}\n", .{self.inner.initprot});
         try writer.print("  Number of sections: {}\n", .{self.inner.nsects});
-        try writer.print("  Flags: 0x{x}\n", .{self.inner.flags});
-        try writer.print("  Sections: {{\n", .{});
+        try writer.print("  Flags: 0x{x}", .{self.inner.flags});
 
-        for (self.section_headers.items) |section| {
-            try formatSectionHeader(section, fmt, options, writer);
+        if (self.section_headers.items.len > 0) {
+            try writer.print("\n  Sections", .{});
+
+            for (self.section_headers.items) |section| {
+                try writer.print("\n", .{});
+                try formatSectionHeader(section, fmt, options, writer);
+            }
         }
-        try writer.print("}}\n", .{});
     }
 
     pub fn deinit(self: *SegmentCommand, alloc: *Allocator) void {
@@ -117,7 +120,7 @@ pub const SegmentCommand = struct {
     }
 
     fn formatSectionHeader(section: macho.section_64, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("     Section header {{\n", .{});
+        try writer.print("     Section header\n", .{});
         try writer.print("       Section name: {}\n", .{section.sectname});
         try writer.print("       Segment name: {}\n", .{section.segname});
         try writer.print("       Address: 0x{x:0<16}\n", .{section.addr});
@@ -129,8 +132,7 @@ pub const SegmentCommand = struct {
         try writer.print("       Flags: 0x{x}\n", .{section.flags});
         try writer.print("       Reserved1 : 0x{x}\n", .{section.reserved1});
         try writer.print("       Reserved2: {}\n", .{section.reserved2});
-        try writer.print("       Reserved3: {}\n", .{section.reserved3});
-        try writer.print("    }}\n", .{});
+        try writer.print("       Reserved3: {}", .{section.reserved3});
     }
 };
 
@@ -153,12 +155,11 @@ pub const CodeSignatureCommand = struct {
     }
 
     pub fn format(self: CodeSignatureCommand, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Load command {{\n", .{});
-        try writer.print("  Command: LC_CODE_SIGNATURE(0x{x})\n", .{self.inner.cmd});
+        try writer.print("Code signature\n", .{});
+        try writer.print("  Command ID: LC_CODE_SIGNATURE(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
         try writer.print("  Data offset: {}\n", .{self.inner.dataoff});
-        try writer.print("  Data size: {}\n", .{self.inner.datasize});
-        try writer.print("}}\n", .{});
+        try writer.print("  Data size: {}", .{self.inner.datasize});
     }
 
     pub fn deinit(self: *CodeSignatureCommand, alloc: *Allocator) void {}
@@ -188,11 +189,10 @@ pub const UnknownCommand = struct {
     }
 
     pub fn format(self: UnknownCommand, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Load command {{\n", .{});
-        try writer.print("  Command: ??(0x{x})\n", .{self.inner.cmd});
+        try writer.print("Unknown\n", .{});
+        try writer.print("  Command ID: ??(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
-        try writer.print("  Raw contents: 0x{x}\n", .{self.contents.items[0..]});
-        try writer.print("}}\n", .{});
+        try writer.print("  Raw contents: 0x{x}", .{self.contents.items[0..]});
     }
 
     pub fn deinit(self: *UnknownCommand, alloc: *Allocator) void {

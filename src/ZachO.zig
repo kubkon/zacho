@@ -64,15 +64,30 @@ pub fn deinit(self: *ZachO) void {
     self.data.deinit(self.alloc);
 }
 
-pub fn format(self: ZachO, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-    if (self.header) |header| {
-        try formatHeader(header, writer);
+pub fn printHeader(self: ZachO, writer: anytype) !void {
+    const header = &self.header.?;
+    try writer.print("Header\n", .{});
+    try writer.print("  Magic number: 0x{x}\n", .{header.magic});
+    try writer.print("  CPU type: 0x{x}\n", .{header.cputype});
+    try writer.print("  CPU sub-type: 0x{x}\n", .{header.cpusubtype});
+    try writer.print("  File type: 0x{x}\n", .{header.filetype});
+    try writer.print("  Number of load commands: {}\n", .{header.ncmds});
+    try writer.print("  Size of load commands: {}\n", .{header.sizeofcmds});
+    try writer.print("  Flags: 0x{x}\n", .{header.flags});
+    try writer.print("  Reserved: 0x{x}\n", .{header.reserved});
+}
+
+pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
+    for (self.load_commands.items) |cmd| {
+        try writer.print("{}\n", .{cmd});
     }
+}
+
+pub fn format(self: ZachO, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    try self.printHeader(writer);
     try writer.print("\n", .{});
 
-    for (self.load_commands.items) |cmd| {
-        try writer.print("{}", .{cmd});
-    }
+    try self.printLoadCommands(writer);
     try writer.print("\n", .{});
 
     for (self.load_commands.items) |cmd| {
@@ -82,19 +97,6 @@ pub fn format(self: ZachO, comptime fmt: []const u8, options: std.fmt.FormatOpti
             else => {},
         }
     }
-}
-
-fn formatHeader(header: macho.mach_header_64, writer: anytype) !void {
-    try writer.print("Header {{\n", .{});
-    try writer.print("  Magic number: 0x{x}\n", .{header.magic});
-    try writer.print("  CPU type: 0x{x}\n", .{header.cputype});
-    try writer.print("  CPU sub-type: 0x{x}\n", .{header.cpusubtype});
-    try writer.print("  File type: 0x{x}\n", .{header.filetype});
-    try writer.print("  Number of load commands: {}\n", .{header.ncmds});
-    try writer.print("  Size of load commands: {}\n", .{header.sizeofcmds});
-    try writer.print("  Flags: 0x{x}\n", .{header.flags});
-    try writer.print("  Reserved: 0x{x}\n", .{header.reserved});
-    try writer.print("}}\n", .{});
 }
 
 fn formatData(self: ZachO, segment_command: SegmentCommand, writer: anytype) !void {
