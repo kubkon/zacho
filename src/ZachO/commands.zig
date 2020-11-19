@@ -64,15 +64,33 @@ pub const LoadCommand = union(enum) {
 
     pub fn cmd(self: LoadCommand) u32 {
         return switch (self) {
-            .Segment, .Dylinker, .Dylib, .Unknown => |x| x.cmd(),
-            else => |x| x.cmd,
+            .DyldInfoOnly => |x| x.cmd,
+            .Symtab => |x| x.cmd,
+            .Dysymtab => |x| x.cmd,
+            .Main => |x| x.cmd,
+            .VersionMin => |x| x.cmd,
+            .SourceVersion => |x| x.cmd,
+            .LinkeditData => |x| x.cmd,
+            .Segment => |x| x.cmd(),
+            .Dylinker => |x| x.cmd(),
+            .Dylib => |x| x.cmd(),
+            .Unknown => |x| x.cmd(),
         };
     }
 
     pub fn cmdsize(self: LoadCommand) u32 {
         return switch (self) {
-            .Segment, .Dylinker, .Dylib, .Unknown => |x| x.cmdsize(),
-            else => |x| x.cmdsize,
+            .DyldInfoOnly => |x| x.cmdsize,
+            .Symtab => |x| x.cmdsize,
+            .Dysymtab => |x| x.cmdsize,
+            .Main => |x| x.cmdsize,
+            .VersionMin => |x| x.cmdsize,
+            .SourceVersion => |x| x.cmdsize,
+            .LinkeditData => |x| x.cmdsize,
+            .Segment => |x| x.cmdsize(),
+            .Dylinker => |x| x.cmdsize(),
+            .Dylib => |x| x.cmdsize(),
+            .Unknown => |x| x.cmdsize(),
         };
     }
 

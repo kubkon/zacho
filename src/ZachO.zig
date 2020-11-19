@@ -22,6 +22,9 @@ load_commands: std.ArrayListUnmanaged(LoadCommand) = .{},
 /// Data
 data: std.ArrayListUnmanaged(u8) = .{},
 
+/// Code signature load command
+code_signature_cmd: ?u16 = null,
+
 pub fn init(alloc: *Allocator) ZachO {
     return .{
         .alloc = alloc,
@@ -34,9 +37,13 @@ pub fn parse(self: *ZachO, stream: *io.StreamSource) !void {
     const ncmds = self.header.?.ncmds;
     try self.load_commands.ensureCapacity(self.alloc, ncmds);
 
-    var i: usize = 0;
+    var i: u16 = 0;
     while (i < ncmds) : (i += 1) {
         const cmd = try LoadCommand.parse(self.alloc, stream);
+        switch (cmd.cmd()) {
+            macho.LC_CODE_SIGNATURE => self.code_signature_cmd = i,
+            else => {},
+        }
         self.load_commands.appendAssumeCapacity(cmd);
     }
 
@@ -81,6 +88,13 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
     for (self.load_commands.items) |cmd| {
         try writer.print("{}\n", .{cmd});
     }
+}
+
+pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
+    return if (self.code_signature_cmd) |code_sig|
+        self.formatCodeSignatureData(self.load_commands.items[code_sig].LinkeditData, writer)
+    else
+        writer.print("LC_CODE_SIGNATURE load command not found\n", .{});
 }
 
 pub fn format(self: ZachO, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -214,7 +228,7 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
                         else => {
                             inner = inner[52..];
                             break :blk length2 - 52;
-                        }
+                        },
                     }
                 };
                 try writer.print("    Data still to parse:\n", .{});

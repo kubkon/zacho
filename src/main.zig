@@ -14,6 +14,7 @@ pub fn main() !void {
         clap.parseParam("--help                 Display this help and exit.") catch unreachable,
         clap.parseParam("-h, --header           Print the Mach-O header.") catch unreachable,
         clap.parseParam("-l, --load-commands    Print load commands.") catch unreachable,
+        clap.parseParam("-c, --code-signature   Print the contents of code signature (if any).") catch unreachable,
         clap.parseParam("<FILE>") catch unreachable,
     };
 
@@ -43,6 +44,8 @@ pub fn main() !void {
         try zacho.printHeader(stdout);
     } else if (args.flag("--load-commands")) {
         try zacho.printLoadCommands(stdout);
+    } else if (args.flag("--code-signature")) {
+        try zacho.printCodeSignature(stdout);
     }
 }
 
