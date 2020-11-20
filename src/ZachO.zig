@@ -5,7 +5,6 @@ const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
 const macho = std.macho;
-const machoext = @import("machoext.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -159,7 +158,7 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
     try writer.print("    Count = {}\n", .{count});
     try writer.print("}}\n", .{});
 
-    if (magic != machoext.CSMAGIC_EMBEDDED_SIGNATURE) {
+    if (magic != macho.CSMAGIC_EMBEDDED_SIGNATURE) {
         try writer.print("unknown signature type: 0x{x}\n", .{magic});
         try formatBinaryBlob(self.data.items[start_pos..end_pos], null, writer);
         return;
@@ -173,10 +172,10 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
         try writer.print("{{\n", .{});
 
         const tt_fmt = switch (tt) {
-            machoext.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
-            machoext.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
-            machoext.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
-            machoext.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
+            macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
+            macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
+            macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
+            macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
             else => "Unknown",
         };
         try writer.print("    Type: {}(0x{x})\n", .{ tt_fmt, tt });
@@ -186,9 +185,9 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
         const magic2 = mem.readIntBig(u32, inner[0..4]);
         const length2 = mem.readIntBig(u32, inner[4..8]);
         const magic2_fmt = switch (magic2) {
-            machoext.CSMAGIC_REQUIREMENTS => "CSMAGIC_REQUIREMENTS",
-            machoext.CSMAGIC_CODEDIRECTORY => "CSMAGIC_CODEDIRECTORY",
-            machoext.CSMAGIC_BLOBWRAPPER => "CSMAGIC_BLOBWRAPPER",
+            macho.CSMAGIC_REQUIREMENTS => "CSMAGIC_REQUIREMENTS",
+            macho.CSMAGIC_CODEDIRECTORY => "CSMAGIC_CODEDIRECTORY",
+            macho.CSMAGIC_BLOBWRAPPER => "CSMAGIC_BLOBWRAPPER",
             else => "Unknown",
         };
 
@@ -196,32 +195,36 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
         try writer.print("    Length: {}\n", .{length2});
 
         switch (magic2) {
-            machoext.CSMAGIC_CODEDIRECTORY => {
+            macho.CSMAGIC_CODEDIRECTORY => {
                 const version = mem.readIntBig(u32, inner[8..12]);
                 try writer.print("    Version: 0x{x}\n", .{version});
                 try writer.print("    Flags: 0x{x}\n", .{mem.readIntBig(u32, inner[12..16])});
                 try writer.print("    Hash offset: {}\n", .{mem.readIntBig(u32, inner[16..20])});
                 try writer.print("    Ident offset: {}\n", .{mem.readIntBig(u32, inner[20..24])});
                 try writer.print("    Number of special slots: {}\n", .{mem.readIntBig(u32, inner[24..28])});
-                try writer.print("    Number of code slots: {}\n", .{mem.readIntBig(u32, inner[32..36])});
-                try writer.print("    Code limit: {}\n", .{mem.readIntBig(u32, inner[40..44])});
-                try writer.print("    Hash size: {}\n", .{mem.readIntBig(u8, inner[44..45])});
-                try writer.print("    Hash type: {}\n", .{mem.readIntBig(u8, inner[45..46])});
-                try writer.print("    Platform: {}\n", .{mem.readIntBig(u8, inner[46..47])});
-                try writer.print("    Page size: {}\n", .{mem.readIntBig(u8, inner[47..48])});
-                try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, inner[48..52])});
+                try writer.print("    Number of code slots: {}\n", .{mem.readIntBig(u32, inner[28..32])});
+                try writer.print("    Code limit: {}\n", .{mem.readIntBig(u32, inner[32..36])});
+                try writer.print("    Hash size: {}\n", .{inner[36]});
+                try writer.print("    Hash type: {}\n", .{inner[37]});
+                try writer.print("    Platform: {}\n", .{inner[38]});
+                try writer.print("    Page size: {}\n", .{inner[39]});
+                try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, inner[40..44])});
 
                 const len = blk: {
                     switch (version) {
                         0x20400 => {
-                            try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, inner[52..60])});
-                            try writer.print("    Limit of executable segment: {}\n", .{mem.readIntBig(u64, inner[60..68])});
-                            try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readIntBig(u64, inner[68..76])});
-                            inner = inner[76..];
-                            break :blk length2 - 76;
+                            try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, inner[44..48])});
+                            try writer.print("    Team offset: {}\n", .{mem.readIntBig(u32, inner[48..52])});
+                            try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, inner[52..56])});
+                            try writer.print("    Code limit 64: {}\n", .{mem.readIntBig(u64, inner[56..64])});
+                            try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, inner[64..72])});
+                            try writer.print("    Limit of executable segment: {}\n", .{mem.readIntBig(u64, inner[72..80])});
+                            try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readIntBig(u64, inner[80..88])});
+                            inner = inner[88..];
+                            break :blk length2 - 88;
                         },
                         0x20100 => {
-                            try writer.print("    Offset of optional scatter vector: {}\n", .{mem.readIntBig(u32, inner[52..56])});
+                            try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, inner[52..56])});
                             inner = inner[56..];
                             break :blk length2 - 56;
                         },

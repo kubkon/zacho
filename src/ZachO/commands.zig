@@ -2,7 +2,6 @@ const std = @import("std");
 const io = std.io;
 const mem = std.mem;
 const macho = std.macho;
-const machoext = @import("../machoext.zig");
 
 const Allocator = mem.Allocator;
 const FormatOptions = std.fmt.FormatOptions;
@@ -15,9 +14,9 @@ pub const LoadCommand = union(enum) {
     Dysymtab: macho.dysymtab_command,
     Dylinker: DylinkerCommand,
     Dylib: DylibCommand,
-    Main: machoext.entry_point_command,
-    VersionMin: machoext.version_min_command,
-    SourceVersion: machoext.source_version_command,
+    Main: macho.entry_point_command,
+    VersionMin: macho.version_min_command,
+    SourceVersion: macho.source_version_command,
     LinkeditData: macho.linkedit_data_command,
     Unknown: UnknownCommand,
 
@@ -45,15 +44,15 @@ pub const LoadCommand = union(enum) {
                 .Dylib = try DylibCommand.parse(alloc, stream),
             },
             macho.LC_MAIN => LoadCommand{
-                .Main = try parseCommand(machoext.entry_point_command, stream),
+                .Main = try parseCommand(macho.entry_point_command, stream),
             },
             macho.LC_VERSION_MIN_MACOSX, macho.LC_VERSION_MIN_IPHONEOS, macho.LC_VERSION_MIN_WATCHOS, macho.LC_VERSION_MIN_TVOS => LoadCommand{
-                .VersionMin = try parseCommand(machoext.version_min_command, stream),
+                .VersionMin = try parseCommand(macho.version_min_command, stream),
             },
             macho.LC_SOURCE_VERSION => LoadCommand{
-                .SourceVersion = try parseCommand(machoext.source_version_command, stream),
+                .SourceVersion = try parseCommand(macho.source_version_command, stream),
             },
-            macho.LC_FUNCTION_STARTS, macho.LC_DATA_IN_CODE, machoext.LC_CODE_SIGNATURE => LoadCommand{
+            macho.LC_FUNCTION_STARTS, macho.LC_DATA_IN_CODE, macho.LC_CODE_SIGNATURE => LoadCommand{
                 .LinkeditData = try parseCommand(macho.linkedit_data_command, stream),
             },
             else => LoadCommand{
@@ -374,7 +373,7 @@ fn formatDysymtabCommand(
 }
 
 fn formatMainCommand(
-    cmd: machoext.entry_point_command,
+    cmd: macho.entry_point_command,
     comptime fmt: []const u8,
     options: FormatOptions,
     writer: anytype,
@@ -387,7 +386,7 @@ fn formatMainCommand(
 }
 
 fn formatVersionMinCommand(
-    cmd: machoext.version_min_command,
+    cmd: macho.version_min_command,
     comptime fmt: []const u8,
     options: FormatOptions,
     writer: anytype,
@@ -407,7 +406,7 @@ fn formatVersionMinCommand(
 }
 
 fn formatSourceVersionCommand(
-    cmd: machoext.source_version_command,
+    cmd: macho.source_version_command,
     comptime fmt: []const u8,
     options: FormatOptions,
     writer: anytype,
@@ -426,7 +425,7 @@ fn formatLinkeditDataCommand(
 ) !void {
     try writer.print("Linkedit data command\n", .{});
     const cmd_id = switch (cmd.cmd) {
-        machoext.LC_CODE_SIGNATURE => "LC_CODE_SIGNATURE",
+        macho.LC_CODE_SIGNATURE => "LC_CODE_SIGNATURE",
         macho.LC_FUNCTION_STARTS => "LC_FUNCTION_STARTS",
         macho.LC_DATA_IN_CODE => "LC_DATA_IN_CODE",
         else => unreachable,
