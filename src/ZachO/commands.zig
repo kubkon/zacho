@@ -153,7 +153,7 @@ pub const SegmentCommand = struct {
         try writer.print("Segment command\n", .{});
         try writer.print("  Command ID: LC_SEGMENT_64(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
-        try writer.print("  Segment name: {}\n", .{self.inner.segname});
+        try writer.print("  Segment name: {s}\n", .{self.inner.segname});
         try writer.print("  VM address: 0x{x:0>16}\n", .{self.inner.vmaddr});
         try writer.print("  VM size: {}\n", .{self.inner.vmsize});
         try writer.print("  File offset: 0x{x:0>8}\n", .{self.inner.fileoff});
@@ -179,8 +179,8 @@ pub const SegmentCommand = struct {
 
     fn formatSectionHeader(section: macho.section_64, comptime fmt: []const u8, options: FormatOptions, writer: anytype) !void {
         try writer.print("     Section header\n", .{});
-        try writer.print("       Section name: {}\n", .{section.sectname});
-        try writer.print("       Segment name: {}\n", .{section.segname});
+        try writer.print("       Section name: {s}\n", .{section.sectname});
+        try writer.print("       Segment name: {s}\n", .{section.segname});
         try writer.print("       Address: 0x{x:0>16}\n", .{section.addr});
         try writer.print("       Size: {}\n", .{section.size});
         try writer.print("       Offset: 0x{x:0>8}\n", .{section.offset});
@@ -234,9 +234,9 @@ pub const DylinkerCommand = struct {
             macho.LC_DYLD_ENVIRONMENT => "LC_DYLD_ENVIRONMENT",
             else => unreachable,
         };
-        try writer.print("  Command ID: {}(0x{x})\n", .{ cmd_id, self.inner.cmd });
+        try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
         try writer.print("  String offset: {}\n", .{self.inner.name});
-        try writer.print("  Name: {}", .{self.name.items});
+        try writer.print("  Name: {s}", .{self.name.items});
     }
 
     pub fn deinit(self: *DylinkerCommand, alloc: *Allocator) void {
@@ -285,12 +285,12 @@ pub const DylibCommand = struct {
             macho.LC_REEXPORT_DYLIB => "LC_REEXPORT_DYLIB",
             else => unreachable,
         };
-        try writer.print("  Command ID: {}(0x{x})\n", .{ cmd_id, self.inner.cmd });
+        try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
         try writer.print("  String offset: {}\n", .{self.inner.dylib.name});
         try writer.print("  Timestamp: {}\n", .{self.inner.dylib.timestamp});
         try writer.print("  Current version: {}\n", .{self.inner.dylib.current_version});
         try writer.print("  Compatibility version: {}\n", .{self.inner.dylib.compatibility_version});
-        try writer.print("  Name: {}", .{self.name.items});
+        try writer.print("  Name: {s}", .{self.name.items});
     }
 
     pub fn deinit(self: *DylibCommand, alloc: *Allocator) void {
@@ -314,7 +314,7 @@ fn formatDyldInfoCommand(
         macho.LC_DYLD_INFO_ONLY => "LC_DYLD_INFO_ONLY",
         else => unreachable,
     };
-    try writer.print("  Command ID: {}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Rebase table offset: 0x{x:0>8}\n", .{cmd.rebase_off});
     try writer.print("  Rebase table size: {}\n", .{cmd.rebase_size});
@@ -399,7 +399,7 @@ fn formatVersionMinCommand(
         macho.LC_VERSION_MIN_TVOS => "LC_VERSION_MIN_TVOS",
         else => unreachable,
     };
-    try writer.print("  Command ID: {}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Version: {}\n", .{cmd.version});
     try writer.print("  SDK version: {}", .{cmd.sdk});
@@ -430,7 +430,7 @@ fn formatLinkeditDataCommand(
         macho.LC_DATA_IN_CODE => "LC_DATA_IN_CODE",
         else => unreachable,
     };
-    try writer.print("  Command ID: {}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Data offset: {}\n", .{cmd.dataoff});
     try writer.print("  Data size: {}", .{cmd.datasize});
@@ -463,7 +463,7 @@ pub const UnknownCommand = struct {
         try writer.print("Unknown command\n", .{});
         try writer.print("  Command ID: ??(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
-        try writer.print("  Raw contents: 0x{x}", .{self.contents.items[0..]});
+        try writer.print("  Raw contents: 0x{x}", .{std.fmt.fmtSliceHexLower(self.contents.items[0..])});
     }
 
     pub fn deinit(self: *UnknownCommand, alloc: *Allocator) void {

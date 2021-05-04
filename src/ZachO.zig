@@ -119,7 +119,7 @@ fn formatData(self: ZachO, segment_command: SegmentCommand, writer: anytype) !vo
 
     if (end_pos == start_pos) return;
 
-    try writer.print("{}\n", .{seg.segname});
+    try writer.print("{s}\n", .{seg.segname});
     try writer.print("file = {{ {}, {} }}\n", .{ start_pos, end_pos });
     try writer.print("address = {{ 0x{x:0<16}, 0x{x:0<16} }}\n\n", .{ seg.vmaddr, seg.vmaddr + seg.vmsize });
 
@@ -129,7 +129,7 @@ fn formatData(self: ZachO, segment_command: SegmentCommand, writer: anytype) !vo
         const addr_start = sect.addr;
         const addr_end = sect.addr + sect.size;
 
-        try writer.print("  {},{}\n", .{ sect.segname, sect.sectname });
+        try writer.print("  {s},{s}\n", .{ sect.segname, sect.sectname });
         try writer.print("  file = {{ {}, {} }}\n", .{ file_start, file_end });
         try writer.print("  address = {{ 0x{x:0<16}, 0x{x:0<16} }}\n\n", .{ addr_start, addr_end });
         try formatBinaryBlob(self.data.items[file_start..file_end], "  ", writer);
@@ -178,7 +178,7 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
             macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
             else => "Unknown",
         };
-        try writer.print("    Type: {}(0x{x})\n", .{ tt_fmt, tt });
+        try writer.print("    Type: {s}(0x{x})\n", .{ tt_fmt, tt });
         try writer.print("    Offset: {}\n", .{offset});
 
         var inner = data[offset - 12 - i * 8 ..];
@@ -191,7 +191,7 @@ fn formatCodeSignatureData(self: ZachO, csig: macho.linkedit_data_command, write
             else => "Unknown",
         };
 
-        try writer.print("    Magic: {}(0x{x})\n", .{ magic2_fmt, magic2 });
+        try writer.print("    Magic: {s}(0x{x})\n", .{ magic2_fmt, magic2 });
         try writer.print("    Length: {}\n", .{length2});
 
         switch (magic2) {
@@ -257,14 +257,14 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
     const pp = prefix orelse "";
     while (i < blob.len) : (i += step) {
         if (blob[i..].len < step / 2) {
-            try writer.print("{}{x:<033}  {}\n", .{ pp, blob[i..], blob[i..] });
+            try writer.print("{s}{x:<033}  {s}\n", .{ pp, std.fmt.fmtSliceHexLower(blob[i..]), blob[i..] });
             continue;
         }
         const rem = std.math.min(blob[i..].len, step);
-        try writer.print("{}{x:<016} {x:<016}  {}\n", .{
+        try writer.print("{s}{x:<016} {x:<016}  {s}\n", .{
             pp,
-            blob[i .. i + rem / 2],
-            blob[i + rem / 2 .. i + rem],
+            std.fmt.fmtSliceHexLower(blob[i .. i + rem / 2]),
+            std.fmt.fmtSliceHexLower(blob[i + rem / 2 .. i + rem]),
             blob[i .. i + rem],
         });
     }

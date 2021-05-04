@@ -7,8 +7,8 @@ const ZachO = @import("ZachO.zig");
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 pub fn main() !void {
-    const stderr = std.io.getStdErr().outStream();
-    const stdout = std.io.getStdOut().outStream();
+    const stderr = std.io.getStdErr().writer();
+    const stdout = std.io.getStdOut().writer();
 
     const params = comptime [_]clap.Param(clap.Help){
         clap.parseParam("--help                 Display this help and exit.") catch unreachable,
