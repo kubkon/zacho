@@ -25,20 +25,19 @@ pub fn main() !void {
         return printUsageWithHelp(stderr, params[0..]);
     }
 
-    const file = blk: {
-        for (args.positionals()) |pos| {
-            break :blk pos;
-        }
-        break :blk null;
-    };
-    if (file == null) {
+    if (args.positionals().len == 0) {
         return stderr.print("missing positional argument <FILE>...\n", .{});
     }
 
+    const filename = args.positionals()[0];
+    const file = try std.fs.cwd().openFile(filename, .{});
     var zacho = ZachO.init(&gpa.allocator);
-    defer zacho.deinit();
+    defer {
+        zacho.deinit();
+        zacho.closeFiles();
+    }
 
-    try zacho.parseFile(file.?);
+    try zacho.parse(file);
 
     if (args.flag("--header")) {
         try zacho.printHeader(stdout);
