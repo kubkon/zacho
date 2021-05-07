@@ -11,7 +11,7 @@ refuse to load your hand-crafter binary, or you just like looking at Mach-O diss
 ## Usage
 
 ```
-> zacho --help
+zacho --help
 zacho [-hl] [--help] <FILE>
 	    --help         	Display this help and exit.
 	-h, --header       	Print the Mach-O header.
@@ -22,18 +22,14 @@ Currently, `zacho` will let you print parsed Mach-O header, and print formatted 
 I should point here out that I'm basing the flags on `otool` so if you're familiar with those,
 `zacho` should feel like second home to you.
 
-## Building and running
+## Building from source
 
-When cloning, remember to recursively pull submodules
+`zacho` relies on [`gyro`] for package management, so make sure you have `gyro` in your PATH.
+
+[`gyro`]: https://github.com/mattnite/gyro
+
+With that out of the way, simply clone the repo and build with `gyro` instead of `zig` like so
 
 ```
-> git clone --recurse-submodules https://github.com/kubkon/zacho
+gyro build
 ```
-
-Next, simply run
-
-```zig
-> zig build -Drelease-fast
-```
-
-And that's it!
