@@ -1,4 +1,5 @@
 const Builder = @import("std").build.Builder;
+const pkgs = @import("deps.zig").pkgs;
 
 pub fn build(b: *Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -14,7 +15,7 @@ pub fn build(b: *Builder) void {
     const exe = b.addExecutable("zacho", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
-    exe.addPackagePath("clap", "clap/clap.zig");
+    pkgs.addAllTo(exe);
     exe.install();
 
     const run_cmd = exe.run();
