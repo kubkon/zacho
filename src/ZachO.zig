@@ -5,6 +5,7 @@ const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
 const macho = std.macho;
+const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 
@@ -19,11 +20,15 @@ header: ?macho.mach_header_64 = null,
 /// Load commands
 load_commands: std.ArrayListUnmanaged(LoadCommand) = .{},
 
+symtab_cmd: ?u16 = null,
+code_signature_cmd: ?u16 = null,
+
+/// Symbol and string tables.
+symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
+strtab: std.ArrayListUnmanaged(u8) = .{},
+
 /// Data
 data: std.ArrayListUnmanaged(u8) = .{},
-
-/// Code signature load command
-code_signature_cmd: ?u16 = null,
 
 pub fn init(allocator: *Allocator) ZachO {
     return .{ .allocator = allocator };
@@ -34,6 +39,8 @@ pub fn deinit(self: *ZachO) void {
         cmd.deinit(self.allocator);
     }
     self.load_commands.deinit(self.allocator);
+    self.symtab.deinit(self.allocator);
+    self.strtab.deinit(self.allocator);
     self.data.deinit(self.allocator);
 }
 
@@ -57,19 +64,42 @@ pub fn parse(self: *ZachO, file: fs.File) !void {
     while (i < ncmds) : (i += 1) {
         const cmd = try LoadCommand.parse(self.allocator, reader);
         switch (cmd.cmd()) {
+            macho.LC_SYMTAB => self.symtab_cmd = i,
             macho.LC_CODE_SIGNATURE => self.code_signature_cmd = i,
             else => {},
         }
         self.load_commands.appendAssumeCapacity(cmd);
     }
 
-    // TODO parse memory mapped segments
-    try reader.context.seekTo(0);
-    const file_size = try reader.context.getEndPos();
-    var data = try std.ArrayList(u8).initCapacity(self.allocator, file_size);
-    try reader.readAllArrayList(&data, file_size);
-    self.data = data.toUnmanaged();
+    try self.parseSymtab();
+    try self.parseCodeSignature();
+
+    // // TODO parse memory mapped segments
+    // try reader.context.seekTo(0);
+    // const file_size = try reader.context.getEndPos();
+    // var data = try std.ArrayList(u8).initCapacity(self.allocator, file_size);
+    // try reader.readAllArrayList(&data, file_size);
+    // self.data = data.toUnmanaged();
 }
+
+pub fn parseSymtab(self: *ZachO) !void {
+    const symtab_cmd = self.symtab_cmd orelse return;
+
+    const lc = self.load_commands.items[symtab_cmd].Symtab;
+
+    var symtab = try self.allocator.alloc(u8, @sizeOf(macho.nlist_64) * lc.nsyms);
+    defer self.allocator.free(symtab);
+    _ = try self.file.?.preadAll(symtab, lc.symoff);
+    const slice = @alignCast(@alignOf(macho.nlist_64), mem.bytesAsSlice(macho.nlist_64, symtab));
+    try self.symtab.appendSlice(self.allocator, slice);
+
+    var strtab = try self.allocator.alloc(u8, lc.strsize);
+    defer self.allocator.free(strtab);
+    _ = try self.file.?.preadAll(strtab, lc.stroff);
+    try self.strtab.appendSlice(self.allocator, strtab);
+}
+
+pub fn parseCodeSignature(self: *ZachO) !void {}
 
 pub fn printHeader(self: ZachO, writer: anytype) !void {
     const header = &self.header.?;
@@ -87,6 +117,25 @@ pub fn printHeader(self: ZachO, writer: anytype) !void {
 pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
     for (self.load_commands.items) |cmd| {
         try writer.print("{}\n", .{cmd});
+    }
+}
+
+pub fn printSymtab(self: ZachO, writer: anytype) !void {
+    if (self.symtab_cmd == null) {
+        try writer.print("LC_SYMTAB load command not found\n", .{});
+    }
+
+    try writer.print("Symtab\n", .{});
+    try writer.print("  Address   | Section   | Symbol   ", .{});
+    try writer.print("-----------------------------------", .{});
+
+    for (self.symtab.items) |sym| {
+        const sym_name = self.getString(sym.n_strx);
+        try writer.print("  0x{x}     | {s}       | {s}      ", .{
+            sym.n_value,
+            "__TEXT,__text",
+            sym_name,
+        });
     }
 }
 
@@ -288,6 +337,11 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
             blob[i .. i + rem],
         });
     }
+}
+
+fn getString(self: ZachO, off: u32) []const u8 {
+    assert(off < self.strtab.items.len);
+    return mem.spanZ(@ptrCast([*:0]const u8, self.strtab.items.ptr + off));
 }
 
 test "" {
