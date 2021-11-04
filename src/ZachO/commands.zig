@@ -209,6 +209,9 @@ pub const SegmentCommand = struct {
         options: FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
+
         try writer.print("     Section header\n", .{});
         try writer.print("       Section name: {s}\n", .{section.sectname});
         try writer.print("       Segment name: {s}\n", .{section.segname});
@@ -263,6 +266,9 @@ pub const DylinkerCommand = struct {
         options: FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
+
         try writer.print("Dylinker command\n", .{});
         const cmd_id = switch (self.inner.cmd) {
             macho.LC_ID_DYLINKER => "LC_ID_DYLINKER",
@@ -319,6 +325,9 @@ pub const DylibCommand = struct {
         options: FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
+
         try writer.print("Dylib command\n", .{});
         const cmd_id = switch (self.inner.cmd) {
             macho.LC_ID_DYLIB => "LC_ID_DYLIB",
@@ -350,6 +359,9 @@ fn formatDyldInfoCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Dyld info command\n", .{});
     const cmd_id = switch (cmd.cmd) {
         macho.LC_DYLD_INFO => "LC_DYLD_INFO",
@@ -376,6 +388,9 @@ fn formatSymtabCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Symtab command\n", .{});
     try writer.print("  Command ID: LC_SYMTAB(0x{x})\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
@@ -391,6 +406,9 @@ fn formatDysymtabCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Dysymtab command\n", .{});
     try writer.print("  Command ID: LC_DYSYMTAB(0x{x})\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
@@ -420,6 +438,9 @@ fn formatMainCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Main command\n", .{});
     try writer.print("  Command ID: LC_MAIN(0x{x})\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
@@ -433,6 +454,9 @@ fn formatVersionMinCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Version minimum command\n", .{});
     const cmd_id = switch (cmd.cmd) {
         macho.LC_VERSION_MIN_MACOSX => "LC_VERSION_MIN_MACOSX",
@@ -453,6 +477,9 @@ fn formatSourceVersionCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Source version command\n", .{});
     try writer.print("  Command ID: LC_SOURCE_VERSION(0x{x})\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
@@ -465,6 +492,9 @@ fn formatLinkeditDataCommand(
     options: FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try writer.print("Linkedit data command\n", .{});
     const cmd_id = switch (cmd.cmd) {
         macho.LC_CODE_SIGNATURE => "LC_CODE_SIGNATURE",
@@ -507,6 +537,9 @@ pub const UnknownCommand = struct {
         options: FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
+
         try writer.print("Unknown command\n", .{});
         try writer.print("  Command ID: ??(0x{x})\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});

@@ -8,7 +8,9 @@ const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
 
-usingnamespace @import("ZachO/commands.zig");
+const commands = @import("ZachO/commands.zig");
+const LoadCommand = commands.LoadCommand;
+const SegmentCommand = commands.SegmentCommand;
 
 allocator: *Allocator,
 file: ?fs.File = null,
@@ -103,6 +105,9 @@ pub fn format(
     options: std.fmt.FormatOptions,
     writer: anytype,
 ) !void {
+    _ = fmt;
+    _ = options;
+
     try self.printHeader(writer);
     try writer.print("\n", .{});
 
