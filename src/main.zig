@@ -18,7 +18,10 @@ pub fn main() !void {
         clap.parseParam("<FILE>") catch unreachable,
     };
 
-    var args = try clap.parse(clap.Help, &params, &gpa.allocator, null);
+    var args = try clap.parse(clap.Help, &params, .{
+        .allocator = &gpa.allocator,
+        .diagnostic = null,
+    });
     defer args.deinit();
 
     if (args.flag("--help")) {
