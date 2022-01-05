@@ -19,7 +19,7 @@ pub fn main() !void {
     };
 
     var args = try clap.parse(clap.Help, &params, .{
-        .allocator = &gpa.allocator,
+        .allocator = gpa.allocator(),
         .diagnostic = null,
     });
     defer args.deinit();
@@ -34,7 +34,7 @@ pub fn main() !void {
 
     const filename = args.positionals()[0];
     const file = try std.fs.cwd().openFile(filename, .{});
-    var zacho = ZachO.init(&gpa.allocator);
+    var zacho = ZachO.init(gpa.allocator());
     defer {
         zacho.deinit();
         zacho.closeFiles();

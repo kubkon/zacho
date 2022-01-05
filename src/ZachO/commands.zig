@@ -19,54 +19,54 @@ pub const LoadCommand = union(enum) {
     LinkeditData: macho.linkedit_data_command,
     Unknown: UnknownCommand,
 
-    pub fn parse(allocator: *Allocator, reader: anytype) !LoadCommand {
+    pub fn parse(allocator: Allocator, reader: anytype) !LoadCommand {
         const header = try reader.readStruct(macho.load_command);
         try reader.context.seekBy(-@sizeOf(macho.load_command));
 
         return switch (header.cmd) {
-            macho.LC_SEGMENT_64 => LoadCommand{
+            macho.LC.SEGMENT_64 => LoadCommand{
                 .Segment = try SegmentCommand.parse(allocator, reader),
             },
-            macho.LC_DYLD_INFO,
-            macho.LC_DYLD_INFO_ONLY,
+            macho.LC.DYLD_INFO,
+            macho.LC.DYLD_INFO_ONLY,
             => LoadCommand{
                 .DyldInfoOnly = try parseCommand(macho.dyld_info_command, reader),
             },
-            macho.LC_SYMTAB => LoadCommand{
+            macho.LC.SYMTAB => LoadCommand{
                 .Symtab = try parseCommand(macho.symtab_command, reader),
             },
-            macho.LC_DYSYMTAB => LoadCommand{
+            macho.LC.DYSYMTAB => LoadCommand{
                 .Dysymtab = try parseCommand(macho.dysymtab_command, reader),
             },
-            macho.LC_ID_DYLINKER,
-            macho.LC_LOAD_DYLINKER,
-            macho.LC_DYLD_ENVIRONMENT,
+            macho.LC.ID_DYLINKER,
+            macho.LC.LOAD_DYLINKER,
+            macho.LC.DYLD_ENVIRONMENT,
             => LoadCommand{
                 .Dylinker = try DylinkerCommand.parse(allocator, reader),
             },
-            macho.LC_ID_DYLIB,
-            macho.LC_LOAD_WEAK_DYLIB,
-            macho.LC_LOAD_DYLIB,
-            macho.LC_REEXPORT_DYLIB,
+            macho.LC.ID_DYLIB,
+            macho.LC.LOAD_WEAK_DYLIB,
+            macho.LC.LOAD_DYLIB,
+            macho.LC.REEXPORT_DYLIB,
             => LoadCommand{
                 .Dylib = try DylibCommand.parse(allocator, reader),
             },
-            macho.LC_MAIN => LoadCommand{
+            macho.LC.MAIN => LoadCommand{
                 .Main = try parseCommand(macho.entry_point_command, reader),
             },
-            macho.LC_VERSION_MIN_MACOSX,
-            macho.LC_VERSION_MIN_IPHONEOS,
-            macho.LC_VERSION_MIN_WATCHOS,
-            macho.LC_VERSION_MIN_TVOS,
+            macho.LC.VERSION_MIN_MACOSX,
+            macho.LC.VERSION_MIN_IPHONEOS,
+            macho.LC.VERSION_MIN_WATCHOS,
+            macho.LC.VERSION_MIN_TVOS,
             => LoadCommand{
                 .VersionMin = try parseCommand(macho.version_min_command, reader),
             },
-            macho.LC_SOURCE_VERSION => LoadCommand{
+            macho.LC.SOURCE_VERSION => LoadCommand{
                 .SourceVersion = try parseCommand(macho.source_version_command, reader),
             },
-            macho.LC_FUNCTION_STARTS,
-            macho.LC_DATA_IN_CODE,
-            macho.LC_CODE_SIGNATURE,
+            macho.LC.FUNCTION_STARTS,
+            macho.LC.DATA_IN_CODE,
+            macho.LC.CODE_SIGNATURE,
             => LoadCommand{
                 .LinkeditData = try parseCommand(macho.linkedit_data_command, reader),
             },
@@ -76,7 +76,7 @@ pub const LoadCommand = union(enum) {
         };
     }
 
-    pub fn cmd(self: LoadCommand) u32 {
+    pub fn cmd(self: LoadCommand) macho.LC {
         return switch (self) {
             .DyldInfoOnly => |x| x.cmd,
             .Symtab => |x| x.cmd,
@@ -129,7 +129,7 @@ pub const LoadCommand = union(enum) {
         };
     }
 
-    pub fn deinit(self: *LoadCommand, allocator: *Allocator) void {
+    pub fn deinit(self: *LoadCommand, allocator: Allocator) void {
         return switch (self.*) {
             .Segment => |*x| x.deinit(allocator),
             .Dylinker => |*x| x.deinit(allocator),
@@ -144,14 +144,14 @@ pub const SegmentCommand = struct {
     inner: macho.segment_command_64,
     section_headers: std.ArrayListUnmanaged(macho.section_64) = .{},
 
-    pub fn parse(allocator: *Allocator, reader: anytype) !SegmentCommand {
+    pub fn parse(allocator: Allocator, reader: anytype) !SegmentCommand {
         const inner = try reader.readStruct(macho.segment_command_64);
 
         var segment = SegmentCommand{
             .inner = inner,
         };
 
-        try segment.section_headers.ensureCapacity(allocator, inner.nsects);
+        try segment.section_headers.ensureTotalCapacity(allocator, inner.nsects);
 
         var i: usize = 0;
         while (i < inner.nsects) : (i += 1) {
@@ -162,7 +162,7 @@ pub const SegmentCommand = struct {
         return segment;
     }
 
-    pub fn cmd(self: SegmentCommand) u32 {
+    pub fn cmd(self: SegmentCommand) macho.LC {
         return self.inner.cmd;
     }
 
@@ -199,7 +199,7 @@ pub const SegmentCommand = struct {
         }
     }
 
-    pub fn deinit(self: *SegmentCommand, allocator: *Allocator) void {
+    pub fn deinit(self: *SegmentCommand, allocator: Allocator) void {
         self.section_headers.deinit(allocator);
     }
 
@@ -232,7 +232,7 @@ pub const DylinkerCommand = struct {
     inner: macho.dylinker_command,
     name: std.ArrayListUnmanaged(u8) = .{},
 
-    pub fn parse(allocator: *Allocator, reader: anytype) !DylinkerCommand {
+    pub fn parse(allocator: Allocator, reader: anytype) !DylinkerCommand {
         const inner = try reader.readStruct(macho.dylinker_command);
         var dylinker = DylinkerCommand{
             .inner = inner,
@@ -242,7 +242,7 @@ pub const DylinkerCommand = struct {
         try reader.context.seekBy(inner.name);
 
         const name_len = inner.cmdsize - inner.name;
-        try dylinker.name.ensureCapacity(allocator, name_len);
+        try dylinker.name.ensureTotalCapacity(allocator, name_len);
 
         var i: usize = 0;
         while (i < name_len) : (i += 1) {
@@ -252,7 +252,7 @@ pub const DylinkerCommand = struct {
         return dylinker;
     }
 
-    pub fn cmd(self: DylinkerCommand) u32 {
+    pub fn cmd(self: DylinkerCommand) macho.LC {
         return self.inner.cmd;
     }
 
@@ -271,9 +271,9 @@ pub const DylinkerCommand = struct {
 
         try writer.print("Dylinker command\n", .{});
         const cmd_id = switch (self.inner.cmd) {
-            macho.LC_ID_DYLINKER => "LC_ID_DYLINKER",
-            macho.LC_LOAD_DYLINKER => "LC_LOAD_DYLINKER",
-            macho.LC_DYLD_ENVIRONMENT => "LC_DYLD_ENVIRONMENT",
+            macho.LC.ID_DYLINKER => "LC_ID_DYLINKER",
+            macho.LC.LOAD_DYLINKER => "LC_LOAD_DYLINKER",
+            macho.LC.DYLD_ENVIRONMENT => "LC_DYLD_ENVIRONMENT",
             else => unreachable,
         };
         try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
@@ -281,7 +281,7 @@ pub const DylinkerCommand = struct {
         try writer.print("  Name: {s}", .{self.name.items});
     }
 
-    pub fn deinit(self: *DylinkerCommand, allocator: *Allocator) void {
+    pub fn deinit(self: *DylinkerCommand, allocator: Allocator) void {
         self.name.deinit(allocator);
     }
 };
@@ -290,7 +290,7 @@ pub const DylibCommand = struct {
     inner: macho.dylib_command,
     name: std.ArrayListUnmanaged(u8) = .{},
 
-    pub fn parse(allocator: *Allocator, reader: anytype) !DylibCommand {
+    pub fn parse(allocator: Allocator, reader: anytype) !DylibCommand {
         const inner = try reader.readStruct(macho.dylib_command);
 
         var dylib = DylibCommand{
@@ -301,7 +301,7 @@ pub const DylibCommand = struct {
         try reader.context.seekBy(inner.dylib.name);
 
         const name_len = inner.cmdsize - inner.dylib.name;
-        try dylib.name.ensureCapacity(allocator, name_len);
+        try dylib.name.ensureTotalCapacity(allocator, name_len);
 
         var i: usize = 0;
         while (i < name_len) : (i += 1) {
@@ -311,7 +311,7 @@ pub const DylibCommand = struct {
         return dylib;
     }
 
-    pub fn cmd(self: DylibCommand) u32 {
+    pub fn cmd(self: DylibCommand) macho.LC {
         return self.inner.cmd;
     }
 
@@ -330,10 +330,10 @@ pub const DylibCommand = struct {
 
         try writer.print("Dylib command\n", .{});
         const cmd_id = switch (self.inner.cmd) {
-            macho.LC_ID_DYLIB => "LC_ID_DYLIB",
-            macho.LC_LOAD_WEAK_DYLIB => "LC_LOAD_WEAK_DYLIB",
-            macho.LC_LOAD_DYLIB => "LC_LOAD_DYLIB",
-            macho.LC_REEXPORT_DYLIB => "LC_REEXPORT_DYLIB",
+            macho.LC.ID_DYLIB => "LC_ID_DYLIB",
+            macho.LC.LOAD_WEAK_DYLIB => "LC_LOAD_WEAK_DYLIB",
+            macho.LC.LOAD_DYLIB => "LC_LOAD_DYLIB",
+            macho.LC.REEXPORT_DYLIB => "LC_REEXPORT_DYLIB",
             else => unreachable,
         };
         try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
@@ -344,7 +344,7 @@ pub const DylibCommand = struct {
         try writer.print("  Name: {s}", .{self.name.items});
     }
 
-    pub fn deinit(self: *DylibCommand, allocator: *Allocator) void {
+    pub fn deinit(self: *DylibCommand, allocator: Allocator) void {
         self.name.deinit(allocator);
     }
 };
@@ -364,8 +364,8 @@ fn formatDyldInfoCommand(
 
     try writer.print("Dyld info command\n", .{});
     const cmd_id = switch (cmd.cmd) {
-        macho.LC_DYLD_INFO => "LC_DYLD_INFO",
-        macho.LC_DYLD_INFO_ONLY => "LC_DYLD_INFO_ONLY",
+        macho.LC.DYLD_INFO => "LC_DYLD_INFO",
+        macho.LC.DYLD_INFO_ONLY => "LC_DYLD_INFO_ONLY",
         else => unreachable,
     };
     try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
@@ -459,10 +459,10 @@ fn formatVersionMinCommand(
 
     try writer.print("Version minimum command\n", .{});
     const cmd_id = switch (cmd.cmd) {
-        macho.LC_VERSION_MIN_MACOSX => "LC_VERSION_MIN_MACOSX",
-        macho.LC_VERSION_MIN_IPHONEOS => "LC_VERSION_MIN_IPHONEOS",
-        macho.LC_VERSION_MIN_WATCHOS => "LC_VERSION_MIN_WATCHOS",
-        macho.LC_VERSION_MIN_TVOS => "LC_VERSION_MIN_TVOS",
+        macho.LC.VERSION_MIN_MACOSX => "LC_VERSION_MIN_MACOSX",
+        macho.LC.VERSION_MIN_IPHONEOS => "LC_VERSION_MIN_IPHONEOS",
+        macho.LC.VERSION_MIN_WATCHOS => "LC_VERSION_MIN_WATCHOS",
+        macho.LC.VERSION_MIN_TVOS => "LC_VERSION_MIN_TVOS",
         else => unreachable,
     };
     try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
@@ -497,9 +497,9 @@ fn formatLinkeditDataCommand(
 
     try writer.print("Linkedit data command\n", .{});
     const cmd_id = switch (cmd.cmd) {
-        macho.LC_CODE_SIGNATURE => "LC_CODE_SIGNATURE",
-        macho.LC_FUNCTION_STARTS => "LC_FUNCTION_STARTS",
-        macho.LC_DATA_IN_CODE => "LC_DATA_IN_CODE",
+        macho.LC.CODE_SIGNATURE => "LC_CODE_SIGNATURE",
+        macho.LC.FUNCTION_STARTS => "LC_FUNCTION_STARTS",
+        macho.LC.DATA_IN_CODE => "LC_DATA_IN_CODE",
         else => unreachable,
     };
     try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
@@ -512,18 +512,18 @@ pub const UnknownCommand = struct {
     inner: macho.load_command,
     contents: std.ArrayListUnmanaged(u8) = .{},
 
-    pub fn parse(allocator: *Allocator, reader: anytype) !UnknownCommand {
+    pub fn parse(allocator: Allocator, reader: anytype) !UnknownCommand {
         const inner = try reader.readStruct(macho.load_command);
         var contents = try allocator.alloc(u8, inner.cmdsize - @sizeOf(macho.load_command));
         _ = try reader.readAll(contents[0..]);
 
         return UnknownCommand{
             .inner = inner,
-            .contents = std.ArrayList(u8).fromOwnedSlice(allocator, contents).toUnmanaged(),
+            .contents = std.ArrayList(u8).fromOwnedSlice(allocator, contents).moveToUnmanaged(),
         };
     }
 
-    pub fn cmd(self: UnknownCommand) u32 {
+    pub fn cmd(self: UnknownCommand) macho.LC {
         return self.inner.cmd;
     }
 
@@ -548,7 +548,7 @@ pub const UnknownCommand = struct {
         });
     }
 
-    pub fn deinit(self: *UnknownCommand, allocator: *Allocator) void {
+    pub fn deinit(self: *UnknownCommand, allocator: Allocator) void {
         self.contents.deinit(allocator);
     }
 };
