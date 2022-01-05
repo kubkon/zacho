@@ -6,7 +6,7 @@ pub const pkgs = struct {
     pub const clap = Pkg{
         .name = "clap",
         .path = FileSource{
-            .path = ".gyro/zig-clap-Hejsil-github-844c9370bcecf063daff697f296d6ae979190649/pkg/clap.zig",
+            .path = ".gyro/zig-clap-Hejsil-github.com-cf8a34d1/pkg/clap.zig",
         },
     };
 

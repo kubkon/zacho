@@ -12,7 +12,7 @@ const commands = @import("ZachO/commands.zig");
 const LoadCommand = commands.LoadCommand;
 const SegmentCommand = commands.SegmentCommand;
 
-allocator: *Allocator,
+allocator: Allocator,
 file: ?fs.File = null,
 
 /// Mach-O header
@@ -27,7 +27,7 @@ data: std.ArrayListUnmanaged(u8) = .{},
 /// Code signature load command
 code_signature_cmd: ?u16 = null,
 
-pub fn init(allocator: *Allocator) ZachO {
+pub fn init(allocator: Allocator) ZachO {
     return .{ .allocator = allocator };
 }
 
@@ -53,13 +53,13 @@ pub fn parse(self: *ZachO, file: fs.File) !void {
     self.header = try reader.readStruct(macho.mach_header_64);
 
     const ncmds = self.header.?.ncmds;
-    try self.load_commands.ensureCapacity(self.allocator, ncmds);
+    try self.load_commands.ensureTotalCapacity(self.allocator, ncmds);
 
     var i: u16 = 0;
     while (i < ncmds) : (i += 1) {
         const cmd = try LoadCommand.parse(self.allocator, reader);
         switch (cmd.cmd()) {
-            macho.LC_CODE_SIGNATURE => self.code_signature_cmd = i,
+            macho.LC.CODE_SIGNATURE => self.code_signature_cmd = i,
             else => {},
         }
         self.load_commands.appendAssumeCapacity(cmd);
@@ -70,7 +70,7 @@ pub fn parse(self: *ZachO, file: fs.File) !void {
     const file_size = try reader.context.getEndPos();
     var data = try std.ArrayList(u8).initCapacity(self.allocator, file_size);
     try reader.readAllArrayList(&data, file_size);
-    self.data = data.toUnmanaged();
+    self.data = data.moveToUnmanaged();
 }
 
 pub fn printHeader(self: ZachO, writer: anytype) !void {
