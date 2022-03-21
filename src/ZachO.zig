@@ -168,10 +168,11 @@ fn formatCodeSignatureData(
     try writer.print("file = {{ {}, {} }}\n\n", .{ start_pos, end_pos });
 
     var data = self.data.items[start_pos..end_pos];
-    const magic = mem.readIntBig(u32, data[0..4]);
-    const length = mem.readIntBig(u32, data[4..8]);
-    const count = mem.readIntBig(u32, data[8..12]);
-    data = data[12..];
+    var ptr = data;
+    const magic = mem.readIntBig(u32, ptr[0..4]);
+    const length = mem.readIntBig(u32, ptr[4..8]);
+    const count = mem.readIntBig(u32, ptr[8..12]);
+    ptr = ptr[12..];
 
     try writer.print("{{\n", .{});
     try writer.print("    Magic = 0x{x}\n", .{magic});
@@ -185,47 +186,58 @@ fn formatCodeSignatureData(
         return;
     }
 
+    var blobs = std.ArrayList(macho.BlobIndex).init(self.allocator);
+    defer blobs.deinit();
+    try blobs.ensureTotalCapacityPrecise(count);
+
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const tt = mem.readIntBig(u32, data[0..4]); // ignored for some reason?
-        const offset = mem.readIntBig(u32, data[4..8]);
-
-        try writer.print("{{\n", .{});
-
+        const tt = mem.readIntBig(u32, ptr[0..4]);
+        const offset = mem.readIntBig(u32, ptr[4..8]);
         const tt_fmt = switch (tt) {
             macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
             macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
             macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
             macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
             macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
-            else => "Unknown",
+            else => "UNKNOWN",
         };
-        try writer.print("    Type: {s}(0x{x})\n", .{ tt_fmt, tt });
-        try writer.print("    Offset: {}\n", .{offset});
+        try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ tt_fmt, tt, offset });
+        blobs.appendAssumeCapacity(.{
+            .@"type" = tt,
+            .offset = offset,
+        });
+        ptr = ptr[8..];
+    }
 
-        var inner = data[offset - 12 - i * 8 ..];
-        const magic2 = mem.readIntBig(u32, inner[0..4]);
-        const length2 = mem.readIntBig(u32, inner[4..8]);
+    for (blobs.items) |blob| {
+        ptr = data[blob.offset..];
+        const magic2 = mem.readIntBig(u32, ptr[0..4]);
+        const length2 = mem.readIntBig(u32, ptr[4..8]);
         const magic2_fmt = switch (magic2) {
             macho.CSMAGIC_REQUIREMENTS => "CSMAGIC_REQUIREMENTS",
             macho.CSMAGIC_CODEDIRECTORY => "CSMAGIC_CODEDIRECTORY",
             macho.CSMAGIC_BLOBWRAPPER => "CSMAGIC_BLOBWRAPPER",
-            else => "Unknown",
+            macho.CSMAGIC_EMBEDDED_ENTITLEMENTS => "CSMAGIC_EMBEDDED_ENTITLEMENTS",
+            macho.CSMAGIC_EMBEDDED_DER_ENTITLEMENTS => "CSMAGIC_EMBEDDED_DER_ENTITLEMENTS",
+            else => "UNKNOWN",
         };
 
+        try writer.print("{{\n", .{});
         try writer.print("    Magic: {s}(0x{x})\n", .{ magic2_fmt, magic2 });
         try writer.print("    Length: {}\n", .{length2});
 
         switch (magic2) {
             macho.CSMAGIC_CODEDIRECTORY => {
-                const version = mem.readIntBig(u32, inner[8..12]);
-                const flags = mem.readIntBig(u32, inner[12..16]);
-                const hash_off = mem.readIntBig(u32, inner[16..20]);
-                const ident_off = mem.readIntBig(u32, inner[20..24]);
-                const n_special_slots = mem.readIntBig(u32, inner[24..28]);
-                const n_code_slots = mem.readIntBig(u32, inner[28..32]);
-                const code_limit = mem.readIntBig(u32, inner[32..36]);
-                const hash_size = inner[36];
+                const version = mem.readIntBig(u32, ptr[8..12]);
+                const flags = mem.readIntBig(u32, ptr[12..16]);
+                const hash_off = mem.readIntBig(u32, ptr[16..20]);
+                const ident_off = mem.readIntBig(u32, ptr[20..24]);
+                const n_special_slots = mem.readIntBig(u32, ptr[24..28]);
+                const n_code_slots = mem.readIntBig(u32, ptr[28..32]);
+                const code_limit = mem.readIntBig(u32, ptr[32..36]);
+                const hash_size = ptr[36];
+                const page_size = std.math.pow(u16, 2, ptr[39]);
 
                 try writer.print("    Version: 0x{x}\n", .{version});
                 try writer.print("    Flags: 0x{x}\n", .{flags});
@@ -235,75 +247,75 @@ fn formatCodeSignatureData(
                 try writer.print("    Number of code slots: {}\n", .{n_code_slots});
                 try writer.print("    Code limit: {}\n", .{code_limit});
                 try writer.print("    Hash size: {}\n", .{hash_size});
-                try writer.print("    Hash type: {}\n", .{inner[37]});
-                try writer.print("    Platform: {}\n", .{inner[38]});
-                try writer.print("    Page size: {}\n", .{inner[39]});
-                try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, inner[40..44])});
+                try writer.print("    Hash type: {}\n", .{ptr[37]});
+                try writer.print("    Platform: {}\n", .{ptr[38]});
+                try writer.print("    Page size: {}\n", .{ptr[39]});
+                try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, ptr[40..44])});
 
-                const len = blk: {
-                    switch (version) {
-                        0x20400 => {
-                            try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, inner[44..48])});
-                            try writer.print("    Team offset: {}\n", .{mem.readIntBig(u32, inner[48..52])});
-                            try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, inner[52..56])});
-                            try writer.print("    Code limit 64: {}\n", .{mem.readIntBig(u64, inner[56..64])});
-                            try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, inner[64..72])});
-                            try writer.print("    Limit of executable segment: {}\n", .{mem.readIntBig(u64, inner[72..80])});
-                            try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readIntBig(u64, inner[80..88])});
-                            inner = inner[88..];
-                            break :blk length2 - 88;
-                        },
-                        0x20100 => {
-                            try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, inner[52..56])});
-                            inner = inner[56..];
-                            break :blk length2 - 56;
-                        },
-                        else => {
-                            inner = inner[52..];
-                            break :blk length2 - 52;
-                        },
-                    }
-                };
+                switch (version) {
+                    0x20400 => {
+                        try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, ptr[44..48])});
+                        try writer.print("    Team offset: {}\n", .{mem.readIntBig(u32, ptr[48..52])});
+                        try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, ptr[52..56])});
+                        try writer.print("    Code limit 64: {}\n", .{mem.readIntBig(u64, ptr[56..64])});
+                        try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, ptr[64..72])});
+                        try writer.print("    Limit of executable segment: {}\n", .{mem.readIntBig(u64, ptr[72..80])});
+                        try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readIntBig(u64, ptr[80..88])});
+                        ptr = ptr[88..];
+                    },
+                    0x20100 => {
+                        try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, ptr[52..56])});
+                        ptr = ptr[56..];
+                    },
+                    else => {
+                        ptr = ptr[52..];
+                    },
+                }
 
-                var pos = length2 - len;
-                const ident = mem.sliceTo(@ptrCast([*:0]const u8, inner[0..]), 0);
+                const ident = mem.sliceTo(@ptrCast([*:0]const u8, ptr), 0);
                 try writer.print("\nIdent: {s}\n", .{ident});
-                inner = inner[ident.len + 1 ..];
-                pos += @intCast(u32, ident.len + 1);
+                ptr = ptr[ident.len + 1 ..];
 
-                var j: usize = 0;
-                while (j < n_special_slots) : (j += 1) {
-                    const hash = inner[0..hash_size];
-                    try writer.print("\nSpecial slot #{d}:\n", .{j});
+                var j: isize = n_special_slots;
+                while (j > 0) : (j -= 1) {
+                    const hash = ptr[0..hash_size];
+                    try writer.print("\nSpecial slot {s}:\n", .{@intToEnum(CSSLOT, j)});
                     try formatBinaryBlob(hash, "        ", writer);
-                    inner = inner[hash_size..];
-                    pos += hash_size;
+                    ptr = ptr[hash_size..];
                 }
 
-                std.debug.assert(pos == hash_off);
-
-                j = 0;
-                while (j < n_code_slots) : (j += 1) {
-                    const hash = inner[0..hash_size];
-                    try writer.print("\nCode slot #{d}:\n", .{j});
+                var k: usize = 0;
+                const base_addr: u64 = 0x100000000;
+                while (k < n_code_slots) : (k += 1) {
+                    const hash = ptr[0..hash_size];
+                    try writer.print("\nCode slot (0x{x} - 0x{x}):\n", .{
+                        base_addr + k * page_size,
+                        base_addr + (k + 1) * page_size,
+                    });
                     try formatBinaryBlob(hash, "        ", writer);
-                    inner = inner[hash_size..];
-                    pos += hash_size;
+                    ptr = ptr[hash_size..];
                 }
-
-                std.debug.assert(pos == length2);
             },
             else => {
                 try writer.print("    Data:\n", .{});
-                try formatBinaryBlob(inner[8..length2], "        ", writer);
+                try formatBinaryBlob(ptr[8..length2], "        ", writer);
             },
         }
 
         try writer.print("}}\n", .{});
-
-        data = data[8..];
     }
 }
+
+const CSSLOT = enum(u8) {
+    CODEDIRECTORY = macho.CSSLOT_CODEDIRECTORY,
+    INFOSLOT = macho.CSSLOT_INFOSLOT,
+    REQUIREMENTS = macho.CSSLOT_REQUIREMENTS,
+    RESOURCEDIR = macho.CSSLOT_RESOURCEDIR,
+    APPLICATION = macho.CSSLOT_APPLICATION,
+    ENTITLEMENTS = macho.CSSLOT_ENTITLEMENTS,
+    UNKNOWN = 6,
+    DER_ENTITLEMENTS = macho.CSSLOT_DER_ENTITLEMENTS,
+};
 
 fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !void {
     // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
