@@ -292,9 +292,6 @@ fn formatCodeSignatureData(
                 }
 
                 std.debug.assert(pos == length2);
-
-                // try writer.print("    Data still to parse:\n", .{});
-                // try formatBinaryBlob(inner, "        ", writer);
             },
             else => {
                 try writer.print("    Data:\n", .{});
@@ -314,21 +311,19 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
     var i: usize = 0;
     const step = 16;
     const pp = prefix orelse "";
+    var tmp_buf: [step]u8 = undefined;
     while (i < blob.len) : (i += step) {
-        if (blob[i..].len < step / 2) {
-            try writer.print("{s}{x:<033}  {s}\n", .{
-                pp,
-                std.fmt.fmtSliceHexLower(blob[i..]),
-                std.fmt.fmtSliceEscapeLower(blob[i..]),
-            });
-            continue;
+        const end = if (blob[i..].len >= step) step else blob[i..].len;
+        const padding = step - blob[i .. i + end].len;
+        if (padding > 0) {
+            mem.set(u8, &tmp_buf, 0);
         }
-        const rem = std.math.min(blob[i..].len, step);
+        mem.copy(u8, &tmp_buf, blob[i .. i + end]);
         try writer.print("{s}{x:<016} {x:<016}  {s}\n", .{
             pp,
-            std.fmt.fmtSliceHexLower(blob[i .. i + rem / 2]),
-            std.fmt.fmtSliceHexLower(blob[i + rem / 2 .. i + rem]),
-            std.fmt.fmtSliceEscapeLower(blob[i .. i + rem]),
+            std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]),
+            std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
+            std.fmt.fmtSliceEscapeLower(tmp_buf[0..step]),
         });
     }
 }
