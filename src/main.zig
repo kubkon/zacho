@@ -18,21 +18,25 @@ pub fn main() !void {
         clap.parseParam("<FILE>") catch unreachable,
     };
 
-    var args = try clap.parse(clap.Help, &params, .{
+    const parsers = comptime .{
+        .FILE = clap.parsers.string,
+    };
+
+    var res = try clap.parse(clap.Help, &params, parsers, .{
         .allocator = gpa.allocator(),
         .diagnostic = null,
     });
-    defer args.deinit();
+    defer res.deinit();
 
-    if (args.flag("--help")) {
+    if (res.args.help) {
         return printUsageWithHelp(stderr, params[0..]);
     }
 
-    if (args.positionals().len == 0) {
+    if (res.positionals.len == 0) {
         return stderr.print("missing positional argument <FILE>...\n", .{});
     }
 
-    const filename = args.positionals()[0];
+    const filename = res.positionals[0];
     const file = try std.fs.cwd().openFile(filename, .{});
     var zacho = ZachO.init(gpa.allocator());
     defer {
@@ -42,18 +46,18 @@ pub fn main() !void {
 
     try zacho.parse(file);
 
-    if (args.flag("--header")) {
+    if (res.args.header) {
         try zacho.printHeader(stdout);
-    } else if (args.flag("--load-commands")) {
+    } else if (res.args.@"load-commands") {
         try zacho.printLoadCommands(stdout);
-    } else if (args.flag("--code-signature")) {
+    } else if (res.args.@"code-signature") {
         try zacho.printCodeSignature(stdout);
     }
 }
 
 fn printUsageWithHelp(stream: anytype, comptime params: []const clap.Param(clap.Help)) !void {
     try stream.print("zacho ", .{});
-    try clap.usage(stream, params);
+    try clap.usage(stream, clap.Help, params);
     try stream.print("\n", .{});
-    try clap.help(stream, params);
+    try clap.help(stream, clap.Help, params);
 }

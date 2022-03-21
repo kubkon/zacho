@@ -197,6 +197,7 @@ fn formatCodeSignatureData(
             macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
             macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
             macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
+            macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
             else => "Unknown",
         };
         try writer.print("    Type: {s}(0x{x})\n", .{ tt_fmt, tt });
@@ -218,14 +219,22 @@ fn formatCodeSignatureData(
         switch (magic2) {
             macho.CSMAGIC_CODEDIRECTORY => {
                 const version = mem.readIntBig(u32, inner[8..12]);
+                const flags = mem.readIntBig(u32, inner[12..16]);
+                const hash_off = mem.readIntBig(u32, inner[16..20]);
+                const ident_off = mem.readIntBig(u32, inner[20..24]);
+                const n_special_slots = mem.readIntBig(u32, inner[24..28]);
+                const n_code_slots = mem.readIntBig(u32, inner[28..32]);
+                const code_limit = mem.readIntBig(u32, inner[32..36]);
+                const hash_size = inner[36];
+
                 try writer.print("    Version: 0x{x}\n", .{version});
-                try writer.print("    Flags: 0x{x}\n", .{mem.readIntBig(u32, inner[12..16])});
-                try writer.print("    Hash offset: {}\n", .{mem.readIntBig(u32, inner[16..20])});
-                try writer.print("    Ident offset: {}\n", .{mem.readIntBig(u32, inner[20..24])});
-                try writer.print("    Number of special slots: {}\n", .{mem.readIntBig(u32, inner[24..28])});
-                try writer.print("    Number of code slots: {}\n", .{mem.readIntBig(u32, inner[28..32])});
-                try writer.print("    Code limit: {}\n", .{mem.readIntBig(u32, inner[32..36])});
-                try writer.print("    Hash size: {}\n", .{inner[36]});
+                try writer.print("    Flags: 0x{x}\n", .{flags});
+                try writer.print("    Hash offset: {}\n", .{hash_off});
+                try writer.print("    Ident offset: {}\n", .{ident_off});
+                try writer.print("    Number of special slots: {}\n", .{n_special_slots});
+                try writer.print("    Number of code slots: {}\n", .{n_code_slots});
+                try writer.print("    Code limit: {}\n", .{code_limit});
+                try writer.print("    Hash size: {}\n", .{hash_size});
                 try writer.print("    Hash type: {}\n", .{inner[37]});
                 try writer.print("    Platform: {}\n", .{inner[38]});
                 try writer.print("    Page size: {}\n", .{inner[39]});
@@ -255,8 +264,37 @@ fn formatCodeSignatureData(
                         },
                     }
                 };
-                try writer.print("    Data still to parse:\n", .{});
-                try formatBinaryBlob(inner[0..len], "        ", writer);
+
+                var pos = length2 - len;
+                const ident = mem.sliceTo(@ptrCast([*:0]const u8, inner[0..]), 0);
+                try writer.print("\nIdent: {s}\n", .{ident});
+                inner = inner[ident.len + 1 ..];
+                pos += @intCast(u32, ident.len + 1);
+
+                var j: usize = 0;
+                while (j < n_special_slots) : (j += 1) {
+                    const hash = inner[0..hash_size];
+                    try writer.print("\nSpecial slot #{d}:\n", .{j});
+                    try formatBinaryBlob(hash, "        ", writer);
+                    inner = inner[hash_size..];
+                    pos += hash_size;
+                }
+
+                std.debug.assert(pos == hash_off);
+
+                j = 0;
+                while (j < n_code_slots) : (j += 1) {
+                    const hash = inner[0..hash_size];
+                    try writer.print("\nCode slot #{d}:\n", .{j});
+                    try formatBinaryBlob(hash, "        ", writer);
+                    inner = inner[hash_size..];
+                    pos += hash_size;
+                }
+
+                std.debug.assert(pos == length2);
+
+                // try writer.print("    Data still to parse:\n", .{});
+                // try formatBinaryBlob(inner, "        ", writer);
             },
             else => {
                 try writer.print("    Data:\n", .{});
@@ -281,7 +319,7 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
             try writer.print("{s}{x:<033}  {s}\n", .{
                 pp,
                 std.fmt.fmtSliceHexLower(blob[i..]),
-                blob[i..],
+                std.fmt.fmtSliceEscapeLower(blob[i..]),
             });
             continue;
         }
@@ -290,7 +328,7 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
             pp,
             std.fmt.fmtSliceHexLower(blob[i .. i + rem / 2]),
             std.fmt.fmtSliceHexLower(blob[i + rem / 2 .. i + rem]),
-            blob[i .. i + rem],
+            std.fmt.fmtSliceEscapeLower(blob[i .. i + rem]),
         });
     }
 }
