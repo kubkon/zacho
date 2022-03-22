@@ -182,7 +182,7 @@ fn formatCodeSignatureData(
 
     if (magic != macho.CSMAGIC_EMBEDDED_SIGNATURE) {
         try writer.print("unknown signature type: 0x{x}\n", .{magic});
-        try formatBinaryBlob(self.data.items[start_pos..end_pos], null, writer);
+        try formatBinaryBlob(self.data.items[start_pos..end_pos], .{}, writer);
         return;
     }
 
@@ -194,15 +194,15 @@ fn formatCodeSignatureData(
     while (i < count) : (i += 1) {
         const tt = mem.readIntBig(u32, ptr[0..4]);
         const offset = mem.readIntBig(u32, ptr[4..8]);
-        const tt_fmt = switch (tt) {
-            macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
-            macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
-            macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
-            macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
-            macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
-            else => "UNKNOWN",
-        };
-        try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ tt_fmt, tt, offset });
+        // const tt_fmt = switch (tt) {
+        //     macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
+        //     macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
+        //     macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
+        //     macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
+        //     macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
+        //     else => "UNKNOWN",
+        // };
+        try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ fmtCsSlotConst(tt), tt, offset });
         blobs.appendAssumeCapacity(.{
             .@"type" = tt,
             .offset = offset,
@@ -279,8 +279,13 @@ fn formatCodeSignatureData(
                 var j: isize = n_special_slots;
                 while (j > 0) : (j -= 1) {
                     const hash = ptr[0..hash_size];
-                    try writer.print("\nSpecial slot {s}:\n", .{@intToEnum(CSSLOT, j)});
-                    try formatBinaryBlob(hash, "        ", writer);
+                    try writer.print("\nSpecial slot for {s}:\n", .{
+                        fmtCsSlotConst(@intCast(u32, if (j == 6) macho.CSSLOT_SIGNATURESLOT else j)),
+                    });
+                    try formatBinaryBlob(hash, .{
+                        .prefix = "        ",
+                        .fmt_as_str = false,
+                    }, writer);
                     ptr = ptr[hash_size..];
                 }
 
@@ -292,13 +297,20 @@ fn formatCodeSignatureData(
                         base_addr + k * page_size,
                         base_addr + (k + 1) * page_size,
                     });
-                    try formatBinaryBlob(hash, "        ", writer);
+                    try formatBinaryBlob(hash, .{
+                        .prefix = "        ",
+                        .fmt_as_str = false,
+                    }, writer);
                     ptr = ptr[hash_size..];
                 }
             },
             else => {
                 try writer.print("    Data:\n", .{});
-                try formatBinaryBlob(ptr[8..length2], "        ", writer);
+                try formatBinaryBlob(ptr[8..length2], .{
+                    .prefix = "        ",
+                    .fmt_as_str = true,
+                    .escape_str = true,
+                }, writer);
             },
         }
 
@@ -306,23 +318,36 @@ fn formatCodeSignatureData(
     }
 }
 
-const CSSLOT = enum(u8) {
-    CODEDIRECTORY = macho.CSSLOT_CODEDIRECTORY,
-    INFOSLOT = macho.CSSLOT_INFOSLOT,
-    REQUIREMENTS = macho.CSSLOT_REQUIREMENTS,
-    RESOURCEDIR = macho.CSSLOT_RESOURCEDIR,
-    APPLICATION = macho.CSSLOT_APPLICATION,
-    ENTITLEMENTS = macho.CSSLOT_ENTITLEMENTS,
-    UNKNOWN = 6,
-    DER_ENTITLEMENTS = macho.CSSLOT_DER_ENTITLEMENTS,
+fn fmtCsSlotConst(raw: u32) []const u8 {
+    if (macho.CSSLOT_ALTERNATE_CODEDIRECTORIES <= raw and raw < macho.CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT) {
+        return "CSSLOT_ALTERNATE_CODEDIRECTORIES";
+    }
+    return switch (raw) {
+        macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
+        macho.CSSLOT_INFOSLOT => "CSSLOT_INFOSLOT",
+        macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
+        macho.CSSLOT_RESOURCEDIR => "CSSLOT_RESOURCEDIR",
+        macho.CSSLOT_APPLICATION => "CSSLOT_APPLICATION",
+        macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
+        macho.CSSLOT_DER_ENTITLEMENTS => "CSSLOT_DER_ENTITLEMENTS",
+        macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
+        macho.CSSLOT_IDENTIFICATIONSLOT => "CSSLOT_IDENTIFICATIONSLOT",
+        else => "UNKNOWN",
+    };
+}
+
+const FmtBinaryBlobOpts = struct {
+    prefix: ?[]const u8 = null,
+    fmt_as_str: bool = true,
+    escape_str: bool = false,
 };
 
-fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !void {
+fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) !void {
     // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
     // xxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxx  xxxxxxxx
     var i: usize = 0;
     const step = 16;
-    const pp = prefix orelse "";
+    const pp = opts.prefix orelse "";
     var tmp_buf: [step]u8 = undefined;
     while (i < blob.len) : (i += step) {
         const end = if (blob[i..].len >= step) step else blob[i..].len;
@@ -331,12 +356,17 @@ fn formatBinaryBlob(blob: []const u8, prefix: ?[]const u8, writer: anytype) !voi
             mem.set(u8, &tmp_buf, 0);
         }
         mem.copy(u8, &tmp_buf, blob[i .. i + end]);
-        try writer.print("{s}{x:<016} {x:<016}  {s}\n", .{
-            pp,
-            std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]),
-            std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
-            std.fmt.fmtSliceEscapeLower(tmp_buf[0..step]),
+        try writer.print("{s}{x:<016} {x:<016}", .{
+            pp, std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]), std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
         });
+        if (opts.fmt_as_str) {
+            if (opts.escape_str) {
+                try writer.print("  {s}", .{std.fmt.fmtSliceEscapeLower(tmp_buf[0..step])});
+            } else {
+                try writer.print("  {s}", .{tmp_buf[0..step]});
+            }
+        }
+        try writer.writeByte('\n');
     }
 }
 
