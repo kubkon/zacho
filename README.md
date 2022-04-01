@@ -13,9 +13,10 @@ refuse to load your hand-crafter binary, or you just like looking at Mach-O diss
 ```
 zacho --help
 zacho [-hl] [--help] <FILE>
-	    --help         	Display this help and exit.
-	-h, --header       	Print the Mach-O header.
-	-l, --load-commands	Print load commands.
+	    --help         	   Display this help and exit.
+	-h, --header       	   Print the Mach-O header.
+	-l, --load-commands	   Print load commands.
+  -c, --code-signature   Print the contents of code signature (if any).
 ```
 
 Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
@@ -24,12 +25,9 @@ I should point here out that I'm basing the flags on `otool` so if you're famili
 
 ## Building from source
 
-`zacho` relies on [`gyro`] for package management, so make sure you have `gyro` in your PATH.
-
-[`gyro`]: https://github.com/mattnite/gyro
-
-With that out of the way, simply clone the repo and build with `gyro` instead of `zig` like so
+Building from source requires [Zig nightly](https://ziglang.org/download/).
 
 ```
-gyro build
+$ git clone https://github.com/kubkon/zacho.git --recursive
+$ zig build
 ```

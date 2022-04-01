@@ -59,5 +59,5 @@ fn printUsageWithHelp(stream: anytype, comptime params: []const clap.Param(clap.
     try stream.print("zacho ", .{});
     try clap.usage(stream, clap.Help, params);
     try stream.print("\n", .{});
-    try clap.help(stream, clap.Help, params);
+    try clap.help(stream, clap.Help, params, .{});
 }
