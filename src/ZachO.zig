@@ -301,45 +301,74 @@ fn formatCodeSignatureData(
                 var stream = std.io.fixedBufferStream(req_data);
                 var reader = stream.reader();
 
+                try writer.print("    Parsed data:\n", .{});
+
                 while (true) {
                     const next = reader.readIntBig(u32) catch |err| switch (err) {
                         error.EndOfStream => break,
                         else => |e| return e,
                     };
-                    const op = next & EXPR_OP_MASK;
+
+                    const op = @intToEnum(ExprOp, next);
+
+                    try writer.print("  {}", .{op});
 
                     switch (op) {
-                        @enumToInt(ExprOp.op_false) => try writer.print("  {s}", .{.op_false}),
-                        @enumToInt(ExprOp.op_true) => try writer.print("  {s}", .{.op_true}),
-                        @enumToInt(ExprOp.op_ident) => {
-                            const len = try reader.readIntBig(u32);
-                            const pos = try stream.getPos();
-                            const ident = req_data[@intCast(usize, pos)..][0..len];
-                            try stream.seekBy(@intCast(i64, mem.alignForward(len, @sizeOf(u32))));
-                            try writer.print("  {s}: {s}", .{ .op_ident, ident });
+                        .op_false,
+                        .op_true,
+                        .op_and,
+                        .op_or,
+                        .op_not,
+                        .op_apple_anchor,
+                        .op_anchor_hash,
+                        .op_info_key_value,
+                        .op_trusted_cert,
+                        .op_trusted_certs,
+                        .op_apple_generic_anchor,
+                        .op_entitlement_field,
+                        .op_cert_policy,
+                        .op_named_anchor,
+                        .op_named_code,
+                        .op_notarized,
+                        .op_cert_field_date,
+                        .op_legacy_dev_id,
+                        => {},
+                        .op_ident => try fmtReqData(req_data, reader, writer),
+                        .op_cert_generic => {
+                            const slot = try reader.readIntBig(i32);
+                            switch (slot) {
+                                LEAF_CERT => try writer.writeAll("\n    leaf"),
+                                ROOT_CERT => try writer.writeAll("\n    root"),
+                                else => try writer.print("\n    slot {d}", .{slot}),
+                            }
+                            try fmtCssmData(req_data, reader, writer);
+                            try fmtReqMatch(req_data, reader, writer);
                         },
-                        @enumToInt(ExprOp.op_apple_anchor) => try writer.print("  {s}", .{.op_apple_anchor}),
-                        @enumToInt(ExprOp.op_anchor_hash) => try writer.print("  {s}", .{.op_anchor_hash}),
-                        @enumToInt(ExprOp.op_info_key_value) => try writer.print("  {s}", .{.op_info_key_value}),
-                        @enumToInt(ExprOp.op_and) => try writer.print("  {s}", .{.op_and}),
-                        @enumToInt(ExprOp.op_or) => try writer.print("  {s}", .{.op_or}),
-                        @enumToInt(ExprOp.op_cd_hash) => try writer.print("  {s}", .{.op_cd_hash}),
-                        @enumToInt(ExprOp.op_not) => try writer.print("  {s}", .{.op_not}),
-                        @enumToInt(ExprOp.op_info_key_field) => try writer.print("  {s}", .{.op_info_key_field}),
-                        @enumToInt(ExprOp.op_cert_field) => try writer.print("  {s}", .{.op_cert_field}),
-                        @enumToInt(ExprOp.op_trusted_cert) => try writer.print("  {s}", .{.op_trusted_cert}),
-                        @enumToInt(ExprOp.op_trusted_certs) => try writer.print("  {s}", .{.op_trusted_certs}),
-                        @enumToInt(ExprOp.op_cert_generic) => try writer.print("  {s}", .{.op_cert_generic}),
-                        @enumToInt(ExprOp.op_apple_generic_anchor) => try writer.print("  {s}", .{.op_apple_generic_anchor}),
-                        @enumToInt(ExprOp.op_entitlement_field) => try writer.print("  {s}", .{.op_entitlement_field}),
-                        @enumToInt(ExprOp.op_cert_policy) => try writer.print("  {s}", .{.op_cert_policy}),
-                        @enumToInt(ExprOp.op_named_anchor) => try writer.print("  {s}", .{.op_named_anchor}),
-                        @enumToInt(ExprOp.op_named_code) => try writer.print("  {s}", .{.op_named_code}),
-                        @enumToInt(ExprOp.op_platform) => try writer.print("  {s}", .{.op_platform}),
-                        @enumToInt(ExprOp.op_notarized) => try writer.print("  {s}", .{.op_notarized}),
-                        @enumToInt(ExprOp.op_cert_field_date) => try writer.print("  {s}", .{.op_cert_field_date}),
-                        @enumToInt(ExprOp.op_legacy_dev_id) => try writer.print("  {s}", .{.op_legacy_dev_id}),
-                        else => try writer.print("  unknown opcode: {x}", .{op}),
+                        .op_cert_field => {
+                            const slot = try reader.readIntBig(i32);
+                            switch (slot) {
+                                LEAF_CERT => try writer.writeAll("\n    leaf"),
+                                ROOT_CERT => try writer.writeAll("\n    root"),
+                                else => try writer.print("\n    slot {d}", .{slot}),
+                            }
+                            try fmtReqData(req_data, reader, writer);
+                            try fmtReqMatch(req_data, reader, writer);
+                        },
+                        .op_platform => {
+                            const platform = try reader.readIntBig(i32);
+                            try writer.print("\n    {x}", .{
+                                std.fmt.fmtSliceHexLower(mem.asBytes(&platform)),
+                            });
+                        },
+                        else => {
+                            if (next & EXPR_OP_GENERIC_FALSE != 0) {
+                                try writer.writeAll("\n    generic false");
+                            } else if (next & EXPR_OP_GENERIC_SKIP != 0) {
+                                try writer.writeAll("\n    generic skip");
+                            } else {
+                                try writer.writeAll("\n    unknown opcode");
+                            }
+                        },
                     }
 
                     try writer.writeByte('\n');
@@ -362,6 +391,80 @@ fn formatCodeSignatureData(
         }
 
         try writer.print("}}\n", .{});
+    }
+}
+
+fn parseReqData(buf: []const u8, reader: anytype) ![]const u8 {
+    const len = try reader.readIntBig(u32);
+    const pos = try reader.context.getPos();
+    const data = buf[@intCast(usize, pos)..][0..len];
+    try reader.context.seekBy(@intCast(i64, mem.alignForward(len, @sizeOf(u32))));
+    return data;
+}
+
+fn fmtReqData(buf: []const u8, reader: anytype, writer: anytype) !void {
+    const data = try parseReqData(buf, reader);
+    try writer.print("\n      {s}", .{data});
+}
+
+fn getOid(buf: []const u8, pos: *usize) usize {
+    var q: usize = 0;
+    while (true) {
+        q = q * 128 + (buf[pos.*] & ~@as(usize, 0x80));
+        if (pos.* >= buf.len) break;
+        if (buf[pos.*] & 0x80 == 0) {
+            pos.* += 1;
+            break;
+        }
+        pos.* += 1;
+    }
+    return q;
+}
+
+fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
+    const data = try parseReqData(buf, reader);
+
+    var pos: usize = 0;
+
+    const oid1 = getOid(data, &pos);
+    const q1 = @minimum(@divFloor(oid1, 40), 2);
+    try writer.print("\n      {d}.{d}", .{ q1, oid1 - q1 * 40 });
+
+    while (pos < data.len) {
+        const oid2 = getOid(data, &pos);
+        try writer.print(".{d}", .{oid2});
+    }
+
+    try writer.print("\n      {s}", .{data});
+}
+
+fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: anytype) !void {
+    _ = buf;
+    const ts = try reader.readIntBig(i64);
+    try writer.print("\n      {d}", .{ts});
+}
+
+fn fmtReqMatch(buf: []const u8, reader: anytype, writer: anytype) !void {
+    const match = @intToEnum(MatchOperation, try reader.readIntBig(u32));
+    try writer.print("\n    {}", .{match});
+    switch (match) {
+        .match_exists, .match_absent => {},
+        .match_equal,
+        .match_contains,
+        .match_begins_with,
+        .match_ends_with,
+        .match_less_than,
+        .match_greater_equal,
+        .match_less_equal,
+        .match_greater_than,
+        => try fmtReqData(buf, reader, writer),
+        .match_on,
+        .match_before,
+        .match_after,
+        .match_on_or_before,
+        .match_on_or_after,
+        => try fmtReqTimestamp(buf, reader, writer),
+        else => try writer.writeAll("\n      unknown opcode"),
     }
 }
 
@@ -421,7 +524,7 @@ test "" {
     std.testing.refAllDecls(@This());
 }
 
-const ExprOp = enum(u8) {
+const ExprOp = enum(u32) {
     op_false,
     op_true,
     op_ident,
@@ -446,6 +549,31 @@ const ExprOp = enum(u8) {
     op_notarized,
     op_cert_field_date,
     op_legacy_dev_id,
+    _,
 };
 
-pub const EXPR_OP_MASK: u32 = 0xff;
+const MatchOperation = enum(u32) {
+    match_exists,
+    match_equal,
+    match_contains,
+    match_begins_with,
+    match_ends_with,
+    match_less_than,
+    match_greater_than,
+    match_less_equal,
+    match_greater_equal,
+    match_on,
+    match_before,
+    match_after,
+    match_on_or_before,
+    match_on_or_after,
+    match_absent,
+    _,
+};
+
+pub const EXPR_OP_FLAG_MASK: u32 = 0xff;
+pub const EXPR_OP_GENERIC_FALSE: u32 = 0x80;
+pub const EXPR_OP_GENERIC_SKIP: u32 = 0x40;
+
+pub const LEAF_CERT = 0;
+pub const ROOT_CERT = -1;
