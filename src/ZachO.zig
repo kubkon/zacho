@@ -194,14 +194,6 @@ fn formatCodeSignatureData(
     while (i < count) : (i += 1) {
         const tt = mem.readIntBig(u32, ptr[0..4]);
         const offset = mem.readIntBig(u32, ptr[4..8]);
-        // const tt_fmt = switch (tt) {
-        //     macho.CSSLOT_CODEDIRECTORY => "CSSLOT_CODEDIRECTORY",
-        //     macho.CSSLOT_REQUIREMENTS => "CSSLOT_REQUIREMENTS",
-        //     macho.CSSLOT_ALTERNATE_CODEDIRECTORIES => "CSSLOT_ALTERNATE_CODEDIRECTORIES",
-        //     macho.CSSLOT_SIGNATURESLOT => "CSSLOT_SIGNATURESLOT",
-        //     macho.CSSLOT_ENTITLEMENTS => "CSSLOT_ENTITLEMENTS",
-        //     else => "UNKNOWN",
-        // };
         try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ fmtCsSlotConst(tt), tt, offset });
         blobs.appendAssumeCapacity(.{
             .@"type" = tt,
@@ -304,13 +296,68 @@ fn formatCodeSignatureData(
                     ptr = ptr[hash_size..];
                 }
             },
-            else => {
+            macho.CSMAGIC_REQUIREMENTS => {
+                const req_data = ptr[8..length2];
+                var stream = std.io.fixedBufferStream(req_data);
+                var reader = stream.reader();
+
+                while (true) {
+                    const next = reader.readIntBig(u32) catch |err| switch (err) {
+                        error.EndOfStream => break,
+                        else => |e| return e,
+                    };
+                    const op = next & EXPR_OP_MASK;
+
+                    switch (op) {
+                        @enumToInt(ExprOp.op_false) => try writer.print("  {s}", .{.op_false}),
+                        @enumToInt(ExprOp.op_true) => try writer.print("  {s}", .{.op_true}),
+                        @enumToInt(ExprOp.op_ident) => {
+                            const len = try reader.readIntBig(u32);
+                            const pos = try stream.getPos();
+                            const ident = req_data[@intCast(usize, pos)..][0..len];
+                            try stream.seekBy(@intCast(i64, mem.alignForward(len, @sizeOf(u32))));
+                            try writer.print("  {s}: {s}", .{ .op_ident, ident });
+                        },
+                        @enumToInt(ExprOp.op_apple_anchor) => try writer.print("  {s}", .{.op_apple_anchor}),
+                        @enumToInt(ExprOp.op_anchor_hash) => try writer.print("  {s}", .{.op_anchor_hash}),
+                        @enumToInt(ExprOp.op_info_key_value) => try writer.print("  {s}", .{.op_info_key_value}),
+                        @enumToInt(ExprOp.op_and) => try writer.print("  {s}", .{.op_and}),
+                        @enumToInt(ExprOp.op_or) => try writer.print("  {s}", .{.op_or}),
+                        @enumToInt(ExprOp.op_cd_hash) => try writer.print("  {s}", .{.op_cd_hash}),
+                        @enumToInt(ExprOp.op_not) => try writer.print("  {s}", .{.op_not}),
+                        @enumToInt(ExprOp.op_info_key_field) => try writer.print("  {s}", .{.op_info_key_field}),
+                        @enumToInt(ExprOp.op_cert_field) => try writer.print("  {s}", .{.op_cert_field}),
+                        @enumToInt(ExprOp.op_trusted_cert) => try writer.print("  {s}", .{.op_trusted_cert}),
+                        @enumToInt(ExprOp.op_trusted_certs) => try writer.print("  {s}", .{.op_trusted_certs}),
+                        @enumToInt(ExprOp.op_cert_generic) => try writer.print("  {s}", .{.op_cert_generic}),
+                        @enumToInt(ExprOp.op_apple_generic_anchor) => try writer.print("  {s}", .{.op_apple_generic_anchor}),
+                        @enumToInt(ExprOp.op_entitlement_field) => try writer.print("  {s}", .{.op_entitlement_field}),
+                        @enumToInt(ExprOp.op_cert_policy) => try writer.print("  {s}", .{.op_cert_policy}),
+                        @enumToInt(ExprOp.op_named_anchor) => try writer.print("  {s}", .{.op_named_anchor}),
+                        @enumToInt(ExprOp.op_named_code) => try writer.print("  {s}", .{.op_named_code}),
+                        @enumToInt(ExprOp.op_platform) => try writer.print("  {s}", .{.op_platform}),
+                        @enumToInt(ExprOp.op_notarized) => try writer.print("  {s}", .{.op_notarized}),
+                        @enumToInt(ExprOp.op_cert_field_date) => try writer.print("  {s}", .{.op_cert_field_date}),
+                        @enumToInt(ExprOp.op_legacy_dev_id) => try writer.print("  {s}", .{.op_legacy_dev_id}),
+                        else => try writer.print("  unknown opcode: {x}", .{op}),
+                    }
+
+                    try writer.writeByte('\n');
+                }
                 try writer.print("    Data:\n", .{});
                 try formatBinaryBlob(ptr[8..length2], .{
                     .prefix = "        ",
                     .fmt_as_str = true,
                     .escape_str = true,
                 }, writer);
+            },
+            else => {
+                // try writer.print("    Data:\n", .{});
+                // try formatBinaryBlob(ptr[8..length2], .{
+                //     .prefix = "        ",
+                //     .fmt_as_str = true,
+                //     .escape_str = true,
+                // }, writer);
             },
         }
 
@@ -373,3 +420,32 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
 test "" {
     std.testing.refAllDecls(@This());
 }
+
+const ExprOp = enum(u8) {
+    op_false,
+    op_true,
+    op_ident,
+    op_apple_anchor,
+    op_anchor_hash,
+    op_info_key_value,
+    op_and,
+    op_or,
+    op_cd_hash,
+    op_not,
+    op_info_key_field,
+    op_cert_field,
+    op_trusted_cert,
+    op_trusted_certs,
+    op_cert_generic,
+    op_apple_generic_anchor,
+    op_entitlement_field,
+    op_cert_policy,
+    op_named_anchor,
+    op_named_code,
+    op_platform,
+    op_notarized,
+    op_cert_field_date,
+    op_legacy_dev_id,
+};
+
+pub const EXPR_OP_MASK: u32 = 0xff;
