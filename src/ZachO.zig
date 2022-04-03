@@ -1,6 +1,7 @@
 const ZachO = @This();
 
 const std = @import("std");
+const assert = std.debug.assert;
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
@@ -222,6 +223,7 @@ fn formatCodeSignatureData(
                 const code_limit = mem.readIntBig(u32, ptr[32..36]);
                 const hash_size = ptr[36];
                 const page_size = std.math.pow(u16, 2, ptr[39]);
+                const team_off = mem.readIntBig(u32, ptr[48..52]);
 
                 try writer.print("    Version: 0x{x}\n", .{version});
                 try writer.print("    Flags: 0x{x}\n", .{flags});
@@ -239,7 +241,7 @@ fn formatCodeSignatureData(
                 switch (version) {
                     0x20400 => {
                         try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, ptr[44..48])});
-                        try writer.print("    Team offset: {}\n", .{mem.readIntBig(u32, ptr[48..52])});
+                        try writer.print("    Team offset: {}\n", .{team_off});
                         try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, ptr[52..56])});
                         try writer.print("    Code limit 64: {}\n", .{mem.readIntBig(u64, ptr[56..64])});
                         try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, ptr[64..72])});
@@ -259,6 +261,13 @@ fn formatCodeSignatureData(
                 const ident = mem.sliceTo(@ptrCast([*:0]const u8, ptr), 0);
                 try writer.print("\nIdent: {s}\n", .{ident});
                 ptr = ptr[ident.len + 1 ..];
+
+                if (team_off > 0) {
+                    assert(team_off - ident_off == ident.len + 1);
+                    const team_ident = mem.sliceTo(@ptrCast([*:0]const u8, ptr), 0);
+                    try writer.print("\nTeam ident: {s}\n", .{team_ident});
+                    ptr = ptr[team_ident.len + 1 ..];
+                }
 
                 var j: isize = n_special_slots;
                 while (j > 0) : (j -= 1) {
