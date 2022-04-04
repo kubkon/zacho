@@ -1,6 +1,7 @@
 const ZachO = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const fs = std.fs;
 const io = std.io;
@@ -412,6 +413,53 @@ fn formatCodeSignatureData(
                     .fmt_as_str = true,
                     .escape_str = true,
                 }, writer);
+            },
+            macho.CSMAGIC_BLOBWRAPPER => {
+                const signature = ptr[8..length2];
+
+                if (comptime builtin.target.isDarwin()) {
+                    const cms = @import("cms.zig");
+
+                    const cd: []const u8 = blk: {
+                        const cd_blob = blobs.items[0];
+                        const cd_header = data[cd_blob.offset..][0..8];
+                        const cd_length = mem.readIntBig(u32, cd_header[4..8]);
+                        break :blk data[cd_blob.offset..][0..cd_length];
+                    };
+
+                    const decoder = try cms.initCMSDecoderRef();
+                    defer decoder.deinit();
+                    try decoder.updateMessage(signature);
+                    try decoder.setDetachedContent(cd);
+                    try decoder.finalizeMessage();
+
+                    const num_signers = try decoder.getNumSigners();
+                    try writer.print("    Number of signers: {d}\n", .{num_signers});
+
+                    const status = try decoder.getSignerStatus(0);
+                    try writer.print("    Signer status: {}\n", .{status});
+
+                    // if (try decoder.copyDetachedContent()) |content_ref| {
+                    //     defer content_ref.deinit();
+                    //     const as_bytes = content_ref.bytes();
+                    //     std.log.warn("{x}", .{std.fmt.fmtSliceHexLower(as_bytes)});
+                    // }
+
+                    // var signer_index: usize = 0;
+                    // while (signer_index < num_signers) : (signer_index += 1) {
+                    //     try writer.print("\n    Signer #{d}\n", .{signer_index});
+                    //     const email_addr = try decoder.signerEmailAddress(self.allocator, signer_index);
+                    //     defer self.allocator.free(email_addr);
+                    //     try writer.print("    Email address: {s}\n", .{email_addr});
+                    // }
+                }
+
+                // try writer.print("    Raw data:\n", .{});
+                // try formatBinaryBlob(signature, .{
+                //     .prefix = "        ",
+                //     .fmt_as_str = true,
+                //     .escape_str = true,
+                // }, writer);
             },
             else => {
                 try writer.print("    Raw data:\n", .{});

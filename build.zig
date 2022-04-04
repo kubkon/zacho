@@ -1,4 +1,6 @@
-const Builder = @import("std").build.Builder;
+const std = @import("std");
+const builtin = @import("builtin");
+const Builder = std.build.Builder;
 
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
@@ -8,6 +10,12 @@ pub fn build(b: *Builder) void {
     exe.addPackagePath("clap", "zig-clap/clap.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
+
+    if (builtin.target.isDarwin()) {
+        exe.linkFramework("CoreFoundation");
+        exe.linkFramework("Security");
+    }
+
     exe.install();
 
     const run_cmd = exe.run();
