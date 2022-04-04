@@ -438,20 +438,6 @@ fn formatCodeSignatureData(
 
                     const status = try decoder.getSignerStatus(0);
                     try writer.print("    Signer status: {}\n", .{status});
-
-                    // if (try decoder.copyDetachedContent()) |content_ref| {
-                    //     defer content_ref.deinit();
-                    //     const as_bytes = content_ref.bytes();
-                    //     std.log.warn("{x}", .{std.fmt.fmtSliceHexLower(as_bytes)});
-                    // }
-
-                    // var signer_index: usize = 0;
-                    // while (signer_index < num_signers) : (signer_index += 1) {
-                    //     try writer.print("\n    Signer #{d}\n", .{signer_index});
-                    //     const email_addr = try decoder.signerEmailAddress(self.allocator, signer_index);
-                    //     defer self.allocator.free(email_addr);
-                    //     try writer.print("    Email address: {s}\n", .{email_addr});
-                    // }
                 }
 
                 // try writer.print("    Raw data:\n", .{});
