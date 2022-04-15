@@ -16,7 +16,7 @@ zacho [-hl] [--help] <FILE>
 	    --help         	   Display this help and exit.
 	-h, --header       	   Print the Mach-O header.
 	-l, --load-commands	   Print load commands.
-  -c, --code-signature   Print the contents of code signature (if any).
+        -c, --code-signature   Print the contents of code signature (if any).
 ```
 
 Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
