@@ -418,7 +418,7 @@ fn formatCodeSignatureData(
                 const signature = ptr[8..length2];
 
                 if (comptime builtin.target.isDarwin()) {
-                    const cms = @import("cms.zig");
+                    const ZigKit = @import("ZigKit");
 
                     const cd: []const u8 = blk: {
                         const cd_blob = blobs.items[0];
@@ -427,8 +427,8 @@ fn formatCodeSignatureData(
                         break :blk data[cd_blob.offset..][0..cd_length];
                     };
 
-                    const decoder = try cms.initCMSDecoderRef();
-                    defer decoder.deinit();
+                    const decoder = try ZigKit.Security.CMSDecoder.create();
+                    defer decoder.release();
                     try decoder.updateMessage(signature);
                     try decoder.setDetachedContent(cd);
                     try decoder.finalizeMessage();
@@ -438,14 +438,15 @@ fn formatCodeSignatureData(
 
                     const status = try decoder.getSignerStatus(0);
                     try writer.print("    Signer status: {}\n", .{status});
+                } else {
+                    try writer.print("    Validating signatures available only on macOS\n", .{});
+                    try writer.print("    Raw data:\n", .{});
+                    try formatBinaryBlob(signature, .{
+                        .prefix = "        ",
+                        .fmt_as_str = true,
+                        .escape_str = true,
+                    }, writer);
                 }
-
-                // try writer.print("    Raw data:\n", .{});
-                // try formatBinaryBlob(signature, .{
-                //     .prefix = "        ",
-                //     .fmt_as_str = true,
-                //     .escape_str = true,
-                // }, writer);
             },
             else => {
                 try writer.print("    Raw data:\n", .{});

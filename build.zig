@@ -12,6 +12,7 @@ pub fn build(b: *Builder) void {
     exe.setBuildMode(mode);
 
     if (builtin.target.isDarwin()) {
+        exe.addPackagePath("ZigKit", "ZigKit/src/main.zig");
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }
