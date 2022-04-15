@@ -8,11 +8,11 @@ pub fn build(b: *Builder) void {
 
     const exe = b.addExecutable("zacho", "src/main.zig");
     exe.addPackagePath("clap", "zig-clap/clap.zig");
+    exe.addPackagePath("ZigKit", "ZigKit/src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
 
-    if (builtin.target.isDarwin()) {
-        exe.addPackagePath("ZigKit", "ZigKit/src/main.zig");
+    if (comptime builtin.target.isDarwin()) {
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }

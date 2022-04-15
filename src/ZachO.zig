@@ -9,6 +9,8 @@ const mem = std.mem;
 const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
+const ZigKit = @import("ZigKit");
+const CMSDecoder = ZigKit.Security.CMSDecoder;
 
 const commands = @import("ZachO/commands.zig");
 const LoadCommand = commands.LoadCommand;
@@ -418,8 +420,6 @@ fn formatCodeSignatureData(
                 const signature = ptr[8..length2];
 
                 if (comptime builtin.target.isDarwin()) {
-                    const ZigKit = @import("ZigKit");
-
                     const cd: []const u8 = blk: {
                         const cd_blob = blobs.items[0];
                         const cd_header = data[cd_blob.offset..][0..8];
@@ -427,7 +427,7 @@ fn formatCodeSignatureData(
                         break :blk data[cd_blob.offset..][0..cd_length];
                     };
 
-                    const decoder = try ZigKit.Security.CMSDecoder.create();
+                    const decoder = try CMSDecoder.create();
                     defer decoder.release();
                     try decoder.updateMessage(signature);
                     try decoder.setDetachedContent(cd);
@@ -439,7 +439,7 @@ fn formatCodeSignatureData(
                     const status = try decoder.getSignerStatus(0);
                     try writer.print("    Signer status: {}\n", .{status});
                 } else {
-                    try writer.print("    Validating signatures available only on macOS\n", .{});
+                    try writer.print("\n\n    !! Validating signatures available only on macOS !! \n\n", .{});
                     try writer.print("    Raw data:\n", .{});
                     try formatBinaryBlob(signature, .{
                         .prefix = "        ",
