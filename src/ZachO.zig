@@ -1,6 +1,7 @@
 const ZachO = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const fs = std.fs;
 const io = std.io;
@@ -8,6 +9,8 @@ const mem = std.mem;
 const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
+const ZigKit = @import("ZigKit");
+const CMSDecoder = ZigKit.Security.CMSDecoder;
 
 const commands = @import("ZachO/commands.zig");
 const LoadCommand = commands.LoadCommand;
@@ -412,6 +415,38 @@ fn formatCodeSignatureData(
                     .fmt_as_str = true,
                     .escape_str = true,
                 }, writer);
+            },
+            macho.CSMAGIC_BLOBWRAPPER => {
+                const signature = ptr[8..length2];
+
+                if (comptime builtin.target.isDarwin()) {
+                    const cd: []const u8 = blk: {
+                        const cd_blob = blobs.items[0];
+                        const cd_header = data[cd_blob.offset..][0..8];
+                        const cd_length = mem.readIntBig(u32, cd_header[4..8]);
+                        break :blk data[cd_blob.offset..][0..cd_length];
+                    };
+
+                    const decoder = try CMSDecoder.create();
+                    defer decoder.release();
+                    try decoder.updateMessage(signature);
+                    try decoder.setDetachedContent(cd);
+                    try decoder.finalizeMessage();
+
+                    const num_signers = try decoder.getNumSigners();
+                    try writer.print("    Number of signers: {d}\n", .{num_signers});
+
+                    const status = try decoder.getSignerStatus(0);
+                    try writer.print("    Signer status: {}\n", .{status});
+                } else {
+                    try writer.print("\n\n    !! Validating signatures available only on macOS !! \n\n", .{});
+                    try writer.print("    Raw data:\n", .{});
+                    try formatBinaryBlob(signature, .{
+                        .prefix = "        ",
+                        .fmt_as_str = true,
+                        .escape_str = true,
+                    }, writer);
+                }
             },
             else => {
                 try writer.print("    Raw data:\n", .{});
