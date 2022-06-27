@@ -177,7 +177,7 @@ pub const SegmentCommand = struct {
         writer: anytype,
     ) !void {
         try writer.print("Segment command\n", .{});
-        try writer.print("  Command ID: LC_SEGMENT_64(0x{x})\n", .{self.inner.cmd});
+        try writer.print("  Command ID: {}\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
         try writer.print("  Segment name: {s}\n", .{self.inner.segname});
         try writer.print("  VM address: 0x{x:0>16}\n", .{self.inner.vmaddr});
@@ -270,13 +270,7 @@ pub const DylinkerCommand = struct {
         _ = options;
 
         try writer.print("Dylinker command\n", .{});
-        const cmd_id = switch (self.inner.cmd) {
-            macho.LC.ID_DYLINKER => "LC_ID_DYLINKER",
-            macho.LC.LOAD_DYLINKER => "LC_LOAD_DYLINKER",
-            macho.LC.DYLD_ENVIRONMENT => "LC_DYLD_ENVIRONMENT",
-            else => unreachable,
-        };
-        try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
+        try writer.print("  Command ID: {}\n", .{self.inner.cmd});
         try writer.print("  String offset: {}\n", .{self.inner.name});
         try writer.print("  Name: {s}", .{self.name.items});
     }
@@ -329,14 +323,7 @@ pub const DylibCommand = struct {
         _ = options;
 
         try writer.print("Dylib command\n", .{});
-        const cmd_id = switch (self.inner.cmd) {
-            macho.LC.ID_DYLIB => "LC_ID_DYLIB",
-            macho.LC.LOAD_WEAK_DYLIB => "LC_LOAD_WEAK_DYLIB",
-            macho.LC.LOAD_DYLIB => "LC_LOAD_DYLIB",
-            macho.LC.REEXPORT_DYLIB => "LC_REEXPORT_DYLIB",
-            else => unreachable,
-        };
-        try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, self.inner.cmd });
+        try writer.print("  Command ID: {}\n", .{self.inner.cmd});
         try writer.print("  String offset: {}\n", .{self.inner.dylib.name});
         try writer.print("  Timestamp: {}\n", .{self.inner.dylib.timestamp});
         try writer.print("  Current version: {}\n", .{self.inner.dylib.current_version});
@@ -363,12 +350,7 @@ fn formatDyldInfoCommand(
     _ = options;
 
     try writer.print("Dyld info command\n", .{});
-    const cmd_id = switch (cmd.cmd) {
-        macho.LC.DYLD_INFO => "LC_DYLD_INFO",
-        macho.LC.DYLD_INFO_ONLY => "LC_DYLD_INFO_ONLY",
-        else => unreachable,
-    };
-    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Rebase table offset: 0x{x:0>8}\n", .{cmd.rebase_off});
     try writer.print("  Rebase table size: {}\n", .{cmd.rebase_size});
@@ -392,7 +374,7 @@ fn formatSymtabCommand(
     _ = options;
 
     try writer.print("Symtab command\n", .{});
-    try writer.print("  Command ID: LC_SYMTAB(0x{x})\n", .{cmd.cmd});
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Symbol table offset: 0x{x:0>8}\n", .{cmd.symoff});
     try writer.print("  Number of symbol table entries: {}\n", .{cmd.nsyms});
@@ -410,7 +392,7 @@ fn formatDysymtabCommand(
     _ = options;
 
     try writer.print("Dysymtab command\n", .{});
-    try writer.print("  Command ID: LC_DYSYMTAB(0x{x})\n", .{cmd.cmd});
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Index of local symbols: {}\n", .{cmd.ilocalsym});
     try writer.print("  Number of local symbols: {}\n", .{cmd.nlocalsym});
@@ -442,7 +424,7 @@ fn formatMainCommand(
     _ = options;
 
     try writer.print("Main command\n", .{});
-    try writer.print("  Command ID: LC_MAIN(0x{x})\n", .{cmd.cmd});
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  File (__TEXT) offset of main(): 0x{x:0>8}\n", .{cmd.entryoff});
     try writer.print("  Initial stack size: {}", .{cmd.stacksize});
@@ -458,14 +440,7 @@ fn formatVersionMinCommand(
     _ = options;
 
     try writer.print("Version minimum command\n", .{});
-    const cmd_id = switch (cmd.cmd) {
-        macho.LC.VERSION_MIN_MACOSX => "LC_VERSION_MIN_MACOSX",
-        macho.LC.VERSION_MIN_IPHONEOS => "LC_VERSION_MIN_IPHONEOS",
-        macho.LC.VERSION_MIN_WATCHOS => "LC_VERSION_MIN_WATCHOS",
-        macho.LC.VERSION_MIN_TVOS => "LC_VERSION_MIN_TVOS",
-        else => unreachable,
-    };
-    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Version: {}\n", .{cmd.version});
     try writer.print("  SDK version: {}", .{cmd.sdk});
@@ -481,7 +456,7 @@ fn formatSourceVersionCommand(
     _ = options;
 
     try writer.print("Source version command\n", .{});
-    try writer.print("  Command ID: LC_SOURCE_VERSION(0x{x})\n", .{cmd.cmd});
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Version: {}", .{cmd.version});
 }
@@ -496,13 +471,7 @@ fn formatLinkeditDataCommand(
     _ = options;
 
     try writer.print("Linkedit data command\n", .{});
-    const cmd_id = switch (cmd.cmd) {
-        macho.LC.CODE_SIGNATURE => "LC_CODE_SIGNATURE",
-        macho.LC.FUNCTION_STARTS => "LC_FUNCTION_STARTS",
-        macho.LC.DATA_IN_CODE => "LC_DATA_IN_CODE",
-        else => unreachable,
-    };
-    try writer.print("  Command ID: {s}(0x{x})\n", .{ cmd_id, cmd.cmd });
+    try writer.print("  Command ID: {}\n", .{cmd.cmd});
     try writer.print("  Command size: {}\n", .{cmd.cmdsize});
     try writer.print("  Data offset: {}\n", .{cmd.dataoff});
     try writer.print("  Data size: {}", .{cmd.datasize});
@@ -541,7 +510,7 @@ pub const UnknownCommand = struct {
         _ = options;
 
         try writer.print("Unknown command\n", .{});
-        try writer.print("  Command ID: ??(0x{x})\n", .{self.inner.cmd});
+        try writer.print("  Command ID: {}\n", .{self.inner.cmd});
         try writer.print("  Command size: {}\n", .{self.inner.cmdsize});
         try writer.print("  Raw contents: 0x{x}", .{
             std.fmt.fmtSliceHexLower(self.contents.items[0..]),
