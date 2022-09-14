@@ -208,6 +208,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 
         switch (lc.cmd()) {
             .SEGMENT_64 => try printSegmentLC(fmt, lc, writer),
+            .DYLD_INFO_ONLY => try printDyldInfoOnlyLC(fmt, lc, writer),
             else => {},
         }
 
@@ -218,6 +219,20 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(fmt, .{ "Command:", @tagName(lc.cmd()), @enumToInt(lc.cmd()) });
     try writer.print(fmt, .{ "Command size:", "", lc.cmdsize() });
+}
+
+fn printDyldInfoOnlyLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.dyld_info_command).?;
+    try writer.print(fmt, .{ "Rebase offset:", "", cmd.rebase_off });
+    try writer.print(fmt, .{ "Rebase size:", "", cmd.rebase_size });
+    try writer.print(fmt, .{ "Binding offset:", "", cmd.bind_off });
+    try writer.print(fmt, .{ "Binding size:", "", cmd.bind_size });
+    try writer.print(fmt, .{ "Weak binding offset:", "", cmd.weak_bind_off });
+    try writer.print(fmt, .{ "Weak binding offset:", "", cmd.weak_bind_size });
+    try writer.print(fmt, .{ "Lazy binding size:", "", cmd.lazy_bind_off });
+    try writer.print(fmt, .{ "Lazy binding size:", "", cmd.lazy_bind_size });
+    try writer.print(fmt, .{ "Export offset:", "", cmd.export_off });
+    try writer.print(fmt, .{ "Export size:", "", cmd.export_size });
 }
 
 fn printSegmentLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
