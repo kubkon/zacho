@@ -46,11 +46,14 @@ pub fn main() !void {
 
     if (res.args.header) {
         try zacho.printHeader(stdout);
-    } else if (res.args.@"load-commands") {
+    }
+    if (res.args.@"load-commands") {
         try zacho.printLoadCommands(stdout);
-    } else if (res.args.@"dyld-info") {
+    }
+    if (res.args.@"dyld-info") {
         try zacho.printDyldInfo(stdout);
-    } else if (res.args.@"code-signature") {
+    }
+    if (res.args.@"code-signature") {
         try zacho.printCodeSignature(stdout);
     }
 }
