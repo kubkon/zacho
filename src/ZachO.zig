@@ -431,14 +431,90 @@ fn printSectionHeader(comptime fmt: []const u8, sect: macho.section_64, writer: 
 }
 
 pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
-    _ = self;
-    _ = writer;
-    // const cmd_id = self.dyld_info_only_cmd orelse {
-    //     return writer.print("LC_DYLD_INFO_ONLY load command not found\n", .{});
-    // };
-    // const cmd = self.load_commands.items[cmd_id].DyldInfoOnly;
+    const lc = self.getDyldInfoOnlyLC() orelse {
+        return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
+    };
 
-    // try formatBinaryBlob(self.data.items[cmd.rebase_off..][0..cmd.rebase_size], .{}, writer);
+    try writer.writeAll("REBASE INFO:\n");
+    const rebase_data = self.data[lc.rebase_off..][0..lc.rebase_size];
+    try self.parseAndPrintRebaseInfo(rebase_data, writer);
+}
+
+fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+    _ = self;
+    var stream = std.io.fixedBufferStream(data);
+    var creader = std.io.countingReader(stream.reader());
+    const reader = creader.reader();
+
+    var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
+    defer segments.deinit();
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => try segments.append(lc.cast(macho.segment_command_64).?),
+        else => {},
+    };
+
+    const fmt_value = "    {x: <8} {s: <50} {s: >20} ({x})\n";
+    const fmt_ptr = "      {x: >8} => {x: <8}\n";
+
+    var seg_id: ?u8 = null;
+    var seg_offset: ?u64 = null;
+    while (true) {
+        const byte = reader.readByte() catch break;
+        const opc = byte & macho.REBASE_OPCODE_MASK;
+        const imm = byte & macho.REBASE_IMMEDIATE_MASK;
+        switch (opc) {
+            macho.REBASE_OPCODE_DONE => {
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                break;
+            },
+            macho.REBASE_OPCODE_SET_TYPE_IMM => {
+                const tt = switch (imm) {
+                    macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
+                    macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
+                    macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
+                    else => "UNKNOWN",
+                };
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+            },
+            macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
+                seg_id = imm;
+                const start = creader.bytes_read;
+                seg_offset = try std.leb.readULEB128(u64, reader);
+                const end = creader.bytes_read;
+
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
+                try writer.print(fmt_value, .{ std.fmt.fmtSliceHexLower(data[start..end]), "", "offset", seg_offset.? });
+            },
+            macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
+                const ntimes = imm;
+
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_IMM_TIMES", "count", ntimes });
+                try writer.writeByte('\n');
+                try writer.writeAll("    ACTIONS:\n");
+
+                const seg = segments.items[seg_id.?];
+                var addr = seg.vmaddr + seg_offset.?;
+                var count: usize = 0;
+                while (count < ntimes) : (count += 1) {
+                    addr += count * @sizeOf(u64);
+                    if (addr > seg.vmaddr + seg.vmsize) {
+                        std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
+                            addr,
+                            seg.segName(),
+                            imm,
+                        });
+                        continue;
+                    }
+                    const ptr_offset = seg.fileoff + seg_offset.?;
+                    const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                    try writer.print(fmt_ptr, .{ addr, ptr });
+                }
+                try writer.writeByte('\n');
+            },
+            else => {},
+        }
+    }
 }
 
 pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
@@ -914,39 +990,39 @@ pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
 //     return magic;
 // }
 
-// const FmtBinaryBlobOpts = struct {
-//     prefix: ?[]const u8 = null,
-//     fmt_as_str: bool = true,
-//     escape_str: bool = false,
-// };
+const FmtBinaryBlobOpts = struct {
+    prefix: ?[]const u8 = null,
+    fmt_as_str: bool = true,
+    escape_str: bool = false,
+};
 
-// fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) !void {
-//     // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
-//     // xxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxx  xxxxxxxx
-//     var i: usize = 0;
-//     const step = 16;
-//     const pp = opts.prefix orelse "";
-//     var tmp_buf: [step]u8 = undefined;
-//     while (i < blob.len) : (i += step) {
-//         const end = if (blob[i..].len >= step) step else blob[i..].len;
-//         const padding = step - blob[i .. i + end].len;
-//         if (padding > 0) {
-//             mem.set(u8, &tmp_buf, 0);
-//         }
-//         mem.copy(u8, &tmp_buf, blob[i .. i + end]);
-//         try writer.print("{s}{x:<016} {x:<016}", .{
-//             pp, std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]), std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
-//         });
-//         if (opts.fmt_as_str) {
-//             if (opts.escape_str) {
-//                 try writer.print("  {s}", .{std.fmt.fmtSliceEscapeLower(tmp_buf[0..step])});
-//             } else {
-//                 try writer.print("  {s}", .{tmp_buf[0..step]});
-//             }
-//         }
-//         try writer.writeByte('\n');
-//     }
-// }
+fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) !void {
+    // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
+    // xxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxx  xxxxxxxx
+    var i: usize = 0;
+    const step = 16;
+    const pp = opts.prefix orelse "";
+    var tmp_buf: [step]u8 = undefined;
+    while (i < blob.len) : (i += step) {
+        const end = if (blob[i..].len >= step) step else blob[i..].len;
+        const padding = step - blob[i .. i + end].len;
+        if (padding > 0) {
+            mem.set(u8, &tmp_buf, 0);
+        }
+        mem.copy(u8, &tmp_buf, blob[i .. i + end]);
+        try writer.print("{s}{x:<016} {x:<016}", .{
+            pp, std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]), std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
+        });
+        if (opts.fmt_as_str) {
+            if (opts.escape_str) {
+                try writer.print("  {s}", .{std.fmt.fmtSliceEscapeLower(tmp_buf[0..step])});
+            } else {
+                try writer.print("  {s}", .{tmp_buf[0..step]});
+            }
+        }
+        try writer.writeByte('\n');
+    }
+}
 
 // test "" {
 //     std.testing.refAllDecls(@This());
@@ -1012,4 +1088,25 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
         .ncmds = self.header.ncmds,
         .buffer = data,
     };
+}
+
+fn getDyldInfoOnlyLC(self: ZachO) ?macho.dyld_info_command {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .DYLD_INFO_ONLY => return lc.cast(macho.dyld_info_command).?,
+        else => continue,
+    } else return null;
+}
+
+fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            if (seg.vmaddr <= addr and addr < seg.vmaddr + seg.vmsize) {
+                return seg;
+            }
+        },
+        else => continue,
+    } else return null;
 }
