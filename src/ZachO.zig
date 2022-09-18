@@ -199,7 +199,11 @@ pub fn printHeader(self: ZachO, writer: anytype) !void {
 }
 
 pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
-    const fmt = "  {s: <20} {s: <20} ({x})\n";
+    const fmt = struct {
+        pub fn fmt(comptime specifier: []const u8) []const u8 {
+            return "  {s: <20} {" ++ specifier ++ ": >30}\n";
+        }
+    };
 
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| {
@@ -216,45 +220,49 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
     }
 }
 
-fn printGenericLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
-    try writer.print(fmt, .{ "Command:", @tagName(lc.cmd()), @enumToInt(lc.cmd()) });
-    try writer.print(fmt, .{ "Command size:", "", lc.cmdsize() });
+fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
+    try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
 }
 
-fn printDyldInfoOnlyLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     const cmd = lc.cast(macho.dyld_info_command).?;
-    try writer.print(fmt, .{ "Rebase offset:", "", cmd.rebase_off });
-    try writer.print(fmt, .{ "Rebase size:", "", cmd.rebase_size });
-    try writer.print(fmt, .{ "Binding offset:", "", cmd.bind_off });
-    try writer.print(fmt, .{ "Binding size:", "", cmd.bind_size });
-    try writer.print(fmt, .{ "Weak binding offset:", "", cmd.weak_bind_off });
-    try writer.print(fmt, .{ "Weak binding offset:", "", cmd.weak_bind_size });
-    try writer.print(fmt, .{ "Lazy binding size:", "", cmd.lazy_bind_off });
-    try writer.print(fmt, .{ "Lazy binding size:", "", cmd.lazy_bind_size });
-    try writer.print(fmt, .{ "Export offset:", "", cmd.export_off });
-    try writer.print(fmt, .{ "Export size:", "", cmd.export_size });
+    try writer.print(f.fmt("x"), .{ "Rebase offset:", cmd.rebase_off });
+    try writer.print(f.fmt("x"), .{ "Rebase size:", cmd.rebase_size });
+    try writer.print(f.fmt("x"), .{ "Binding offset:", cmd.bind_off });
+    try writer.print(f.fmt("x"), .{ "Binding size:", cmd.bind_size });
+    try writer.print(f.fmt("x"), .{ "Weak binding offset:", cmd.weak_bind_off });
+    try writer.print(f.fmt("x"), .{ "Weak binding offset:", cmd.weak_bind_size });
+    try writer.print(f.fmt("x"), .{ "Lazy binding size:", cmd.lazy_bind_off });
+    try writer.print(f.fmt("x"), .{ "Lazy binding size:", cmd.lazy_bind_size });
+    try writer.print(f.fmt("x"), .{ "Export offset:", cmd.export_off });
+    try writer.print(f.fmt("x"), .{ "Export size:", cmd.export_size });
 }
 
-fn printSegmentLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     const seg = lc.cast(macho.segment_command_64).?;
-    try writer.print(fmt, .{ "Segment name:", seg.segName(), std.fmt.fmtSliceHexLower(&seg.segname) });
-    try writer.print(fmt, .{ "VM address:", "", seg.vmaddr });
-    try writer.print(fmt, .{ "VM size:", "", seg.vmsize });
-    try writer.print(fmt, .{ "File offset:", "", seg.fileoff });
-    try writer.print(fmt, .{ "File size:", "", seg.filesize });
+    try writer.print(f.fmt("s"), .{ "Segment name:", seg.segName() });
+    try writer.print(f.fmt("x"), .{ "VM address:", seg.vmaddr });
+    try writer.print(f.fmt("x"), .{ "VM size:", seg.vmsize });
+    try writer.print(f.fmt("x"), .{ "File offset:", seg.fileoff });
+    try writer.print(f.fmt("x"), .{ "File size:", seg.filesize });
 
-    const prot_fmt = "      {s: <37} ({x})\n";
-    try writer.print(fmt, .{ "Max VM protection:", "", seg.maxprot });
+    const prot_fmt = "      {s: <37}\n";
+    try writer.print(f.fmt("x"), .{ "Max VM protection:", seg.maxprot });
     try printProtectionFlags(prot_fmt, seg.maxprot, writer);
 
-    try writer.print(fmt, .{ "Init VM protection:", "", seg.initprot });
+    try writer.print(f.fmt("x"), .{ "Init VM protection:", seg.initprot });
     try printProtectionFlags(prot_fmt, seg.initprot, writer);
 
-    try writer.print(fmt, .{ "Number of sections:", "", seg.nsects });
-    try writer.print(fmt, .{ "Flags:", "", seg.flags });
+    try writer.print(f.fmt("x"), .{ "Number of sections:", seg.nsects });
+    try writer.print(f.fmt("x"), .{ "Flags:", seg.flags });
 
     if (seg.nsects > 0) {
-        const sect_fmt = "    {s: <20} {s: <18} ({x})\n";
+        const sect_fmt = struct {
+            pub fn fmt(comptime specifier: []const u8) []const u8 {
+                return "    {s: <20} {" ++ specifier ++ ": >28}\n";
+            }
+        };
         try writer.writeByte('\n');
         for (lc.getSections()) |sect| {
             try writer.print("  SECTION HEADER:\n", .{});
@@ -263,171 +271,78 @@ fn printSegmentLC(comptime fmt: []const u8, lc: macho.LoadCommandIterator.LoadCo
     }
 }
 
-fn printProtectionFlags(comptime fmt: []const u8, flags: macho.vm_prot_t, writer: anytype) !void {
-    if (flags == macho.PROT.NONE) try writer.print(fmt, .{ "VM_PROT_NONE", macho.PROT.NONE });
-    if (flags & macho.PROT.READ != 0) try writer.print(fmt, .{ "VM_PROT_READ", macho.PROT.READ });
-    if (flags & macho.PROT.WRITE != 0) try writer.print(fmt, .{ "VM_PROT_WRITE", macho.PROT.WRITE });
-    if (flags & macho.PROT.EXEC != 0) try writer.print(fmt, .{ "VM_PROT_EXEC", macho.PROT.EXEC });
-    if (flags & macho.PROT.COPY != 0) try writer.print(fmt, .{ "VM_PROT_COPY", macho.PROT.COPY });
+fn printProtectionFlags(comptime f: []const u8, flags: macho.vm_prot_t, writer: anytype) !void {
+    if (flags == macho.PROT.NONE) try writer.print(f, .{"VM_PROT_NONE"});
+    if (flags & macho.PROT.READ != 0) try writer.print(f, .{"VM_PROT_READ"});
+    if (flags & macho.PROT.WRITE != 0) try writer.print(f, .{"VM_PROT_WRITE"});
+    if (flags & macho.PROT.EXEC != 0) try writer.print(f, .{"VM_PROT_EXEC"});
+    if (flags & macho.PROT.COPY != 0) try writer.print(f, .{"VM_PROT_COPY"});
 }
 
-fn printSectionHeader(comptime fmt: []const u8, sect: macho.section_64, writer: anytype) !void {
-    try writer.print(fmt, .{ "Section name:", sect.sectName(), std.fmt.fmtSliceHexLower(&sect.sectname) });
-    try writer.print(fmt, .{ "Segment name:", sect.segName(), std.fmt.fmtSliceHexLower(&sect.segname) });
-    try writer.print(fmt, .{ "Address:", "", sect.addr });
-    try writer.print(fmt, .{ "Size:", "", sect.size });
-    try writer.print(fmt, .{ "Offset:", "", sect.offset });
-    try writer.print(fmt, .{ "Alignment:", "", std.math.powi(u32, 2, sect.@"align") catch unreachable });
-    try writer.print(fmt, .{ "Relocs offset:", "", sect.reloff });
-    try writer.print(fmt, .{ "Number of relocs:", "", sect.nreloc });
-    try writer.print(fmt, .{ "Flags:", "", sect.flags });
+fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void {
+    try writer.print(f.fmt("s"), .{ "Section name:", sect.sectName() });
+    try writer.print(f.fmt("s"), .{ "Segment name:", sect.segName() });
+    try writer.print(f.fmt("x"), .{ "Address:", sect.addr });
+    try writer.print(f.fmt("x"), .{ "Size:", sect.size });
+    try writer.print(f.fmt("x"), .{ "Offset:", sect.offset });
+    try writer.print(f.fmt("x"), .{ "Alignment:", std.math.powi(u32, 2, sect.@"align") catch unreachable });
+    try writer.print(f.fmt("x"), .{ "Relocs offset:", sect.reloff });
+    try writer.print(f.fmt("x"), .{ "Number of relocs:", sect.nreloc });
+    try writer.print(f.fmt("x"), .{ "Flags:", sect.flags });
 
-    const flag_fmt = "        {s: <35} ({x})\n";
+    const flag_fmt = "        {s: <35}\n";
     switch (sect.@"type"()) {
-        macho.S_REGULAR => try writer.print(flag_fmt, .{
-            "S_REGULAR",
-            macho.S_REGULAR,
-        }),
-        macho.S_ZEROFILL => try writer.print(flag_fmt, .{
-            "S_ZEROFILL",
-            macho.S_ZEROFILL,
-        }),
-        macho.S_CSTRING_LITERALS => try writer.print(flag_fmt, .{
-            "S_CSTRING_LITERALS",
-            macho.S_CSTRING_LITERALS,
-        }),
-        macho.S_4BYTE_LITERALS => try writer.print(flag_fmt, .{
-            "S_4BYTE_LITERALS",
-            macho.S_4BYTE_LITERALS,
-        }),
-        macho.S_8BYTE_LITERALS => try writer.print(flag_fmt, .{
-            "S_8BYTE_LITERALS",
-            macho.S_8BYTE_LITERALS,
-        }),
-        macho.S_LITERAL_POINTERS => try writer.print(flag_fmt, .{
-            "S_LITERAL_POINTERS",
-            macho.S_LITERAL_POINTERS,
-        }),
-        macho.S_NON_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{
-            "S_NON_LAZY_SYMBOL_POINTERS",
-            macho.S_NON_LAZY_SYMBOL_POINTERS,
-        }),
-        macho.S_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{
-            "S_LAZY_SYMBOL_POINTERS",
-            macho.S_LAZY_SYMBOL_POINTERS,
-        }),
-        macho.S_SYMBOL_STUBS => try writer.print(flag_fmt, .{
-            "S_SYMBOL_STUBS",
-            macho.S_SYMBOL_STUBS,
-        }),
-        macho.S_MOD_INIT_FUNC_POINTERS => try writer.print(flag_fmt, .{
-            "S_MOD_INIT_FUNC_POINTERS",
-            macho.S_MOD_INIT_FUNC_POINTERS,
-        }),
-        macho.S_MOD_TERM_FUNC_POINTERS => try writer.print(flag_fmt, .{
-            "S_MOD_TERM_FUNC_POINTERS",
-            macho.S_MOD_TERM_FUNC_POINTERS,
-        }),
-        macho.S_COALESCED => try writer.print(flag_fmt, .{
-            "S_COALESCED",
-            macho.S_COALESCED,
-        }),
-        macho.S_GB_ZEROFILL => try writer.print(flag_fmt, .{
-            "S_GB_ZEROFILL",
-            macho.S_GB_ZEROFILL,
-        }),
-        macho.S_INTERPOSING => try writer.print(flag_fmt, .{
-            "S_INTERPOSING",
-            macho.S_INTERPOSING,
-        }),
-        macho.S_16BYTE_LITERALS => try writer.print(flag_fmt, .{
-            "S_16BYTE_LITERALS",
-            macho.S_16BYTE_LITERALS,
-        }),
-        macho.S_DTRACE_DOF => try writer.print(flag_fmt, .{
-            "S_DTRACE_DOF",
-            macho.S_DTRACE_DOF,
-        }),
-        macho.S_THREAD_LOCAL_REGULAR => try writer.print(flag_fmt, .{
-            "S_THREAD_LOCAL_REGULAR",
-            macho.S_THREAD_LOCAL_REGULAR,
-        }),
-        macho.S_THREAD_LOCAL_ZEROFILL => try writer.print(flag_fmt, .{
-            "S_THREAD_LOCAL_ZEROFILl",
-            macho.S_THREAD_LOCAL_ZEROFILL,
-        }),
-        macho.S_THREAD_LOCAL_VARIABLE_POINTERS => try writer.print(flag_fmt, .{
-            "S_THREAD_LOCAL_VARIABLE_POINTERS",
-            macho.S_THREAD_LOCAL_VARIABLE_POINTERS,
-        }),
-        macho.S_THREAD_LOCAL_INIT_FUNCTION_POINTERS => try writer.print(flag_fmt, .{
-            "S_THREAD_LOCAL_INIT_FUNCTION_POINTERS",
-            macho.S_THREAD_LOCAL_INIT_FUNCTION_POINTERS,
-        }),
-        macho.S_INIT_FUNC_OFFSETS => try writer.print(flag_fmt, .{
-            "S_INIT_FUNC_OFFSETS",
-            macho.S_INIT_FUNC_OFFSETS,
-        }),
+        macho.S_REGULAR => try writer.print(flag_fmt, .{"S_REGULAR"}),
+        macho.S_ZEROFILL => try writer.print(flag_fmt, .{"S_ZEROFILL"}),
+        macho.S_CSTRING_LITERALS => try writer.print(flag_fmt, .{"S_CSTRING_LITERALS"}),
+        macho.S_4BYTE_LITERALS => try writer.print(flag_fmt, .{"S_4BYTE_LITERALS"}),
+        macho.S_8BYTE_LITERALS => try writer.print(flag_fmt, .{"S_8BYTE_LITERALS"}),
+        macho.S_LITERAL_POINTERS => try writer.print(flag_fmt, .{"S_LITERAL_POINTERS"}),
+        macho.S_NON_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{"S_NON_LAZY_SYMBOL_POINTERS"}),
+        macho.S_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{"S_LAZY_SYMBOL_POINTERS"}),
+        macho.S_SYMBOL_STUBS => try writer.print(flag_fmt, .{"S_SYMBOL_STUBS"}),
+        macho.S_MOD_INIT_FUNC_POINTERS => try writer.print(flag_fmt, .{"S_MOD_INIT_FUNC_POINTERS"}),
+        macho.S_MOD_TERM_FUNC_POINTERS => try writer.print(flag_fmt, .{"S_MOD_TERM_FUNC_POINTERS"}),
+        macho.S_COALESCED => try writer.print(flag_fmt, .{"S_COALESCED"}),
+        macho.S_GB_ZEROFILL => try writer.print(flag_fmt, .{"S_GB_ZEROFILL"}),
+        macho.S_INTERPOSING => try writer.print(flag_fmt, .{"S_INTERPOSING"}),
+        macho.S_16BYTE_LITERALS => try writer.print(flag_fmt, .{"S_16BYTE_LITERALS"}),
+        macho.S_DTRACE_DOF => try writer.print(flag_fmt, .{"S_DTRACE_DOF"}),
+        macho.S_THREAD_LOCAL_REGULAR => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_REGULAR"}),
+        macho.S_THREAD_LOCAL_ZEROFILL => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_ZEROFILl"}),
+        macho.S_THREAD_LOCAL_VARIABLE_POINTERS => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_VARIABLE_POINTERS"}),
+        macho.S_THREAD_LOCAL_INIT_FUNCTION_POINTERS => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_INIT_FUNCTION_POINTERS"}),
+        macho.S_INIT_FUNC_OFFSETS => try writer.print(flag_fmt, .{"S_INIT_FUNC_OFFSETS"}),
         else => {},
     }
     const attrs = sect.@"attrs"();
     if (attrs > 0) {
-        if (attrs & macho.S_ATTR_DEBUG != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_DEBUG",
-            macho.S_ATTR_DEBUG,
-        });
-        if (attrs & macho.S_ATTR_PURE_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_PURE_INSTRUCTIONS",
-            macho.S_ATTR_PURE_INSTRUCTIONS,
-        });
-        if (attrs & macho.S_ATTR_NO_TOC != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_NO_TOC",
-            macho.S_ATTR_NO_TOC,
-        });
-        if (attrs & macho.S_ATTR_STRIP_STATIC_SYMS != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_STRIP_STATIC_SYMS",
-            macho.S_ATTR_STRIP_STATIC_SYMS,
-        });
-        if (attrs & macho.S_ATTR_NO_DEAD_STRIP != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_NO_DEAD_STRIP",
-            macho.S_ATTR_NO_DEAD_STRIP,
-        });
-        if (attrs & macho.S_ATTR_LIVE_SUPPORT != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_LIVE_SUPPORT",
-            macho.S_ATTR_LIVE_SUPPORT,
-        });
-        if (attrs & macho.S_ATTR_SELF_MODIFYING_CODE != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_SELF_MODIFYING_CODE",
-            macho.S_ATTR_SELF_MODIFYING_CODE,
-        });
-        if (attrs & macho.S_ATTR_SOME_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_SOME_INSTRUCTIONS",
-            macho.S_ATTR_SOME_INSTRUCTIONS,
-        });
-        if (attrs & macho.S_ATTR_EXT_RELOC != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_EXT_RELOC",
-            macho.S_ATTR_EXT_RELOC,
-        });
-        if (attrs & macho.S_ATTR_LOC_RELOC != 0) try writer.print(flag_fmt, .{
-            "S_ATTR_LOC_RELOC",
-            macho.S_ATTR_LOC_RELOC,
-        });
+        if (attrs & macho.S_ATTR_DEBUG != 0) try writer.print(flag_fmt, .{"S_ATTR_DEBUG"});
+        if (attrs & macho.S_ATTR_PURE_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{"S_ATTR_PURE_INSTRUCTIONS"});
+        if (attrs & macho.S_ATTR_NO_TOC != 0) try writer.print(flag_fmt, .{"S_ATTR_NO_TOC"});
+        if (attrs & macho.S_ATTR_STRIP_STATIC_SYMS != 0) try writer.print(flag_fmt, .{"S_ATTR_STRIP_STATIC_SYMS"});
+        if (attrs & macho.S_ATTR_NO_DEAD_STRIP != 0) try writer.print(flag_fmt, .{"S_ATTR_NO_DEAD_STRIP"});
+        if (attrs & macho.S_ATTR_LIVE_SUPPORT != 0) try writer.print(flag_fmt, .{"S_ATTR_LIVE_SUPPORT"});
+        if (attrs & macho.S_ATTR_SELF_MODIFYING_CODE != 0) try writer.print(flag_fmt, .{"S_ATTR_SELF_MODIFYING_CODE"});
+        if (attrs & macho.S_ATTR_SOME_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{"S_ATTR_SOME_INSTRUCTIONS"});
+        if (attrs & macho.S_ATTR_EXT_RELOC != 0) try writer.print(flag_fmt, .{"S_ATTR_EXT_RELOC"});
+        if (attrs & macho.S_ATTR_LOC_RELOC != 0) try writer.print(flag_fmt, .{"S_ATTR_LOC_RELOC"});
     }
 
     if (sect.@"type"() == macho.S_SYMBOL_STUBS) {
-        try writer.print(fmt, .{ "Indirect sym index:", "", sect.reserved1 });
-        try writer.print(fmt, .{ "Size of stubs:", "", sect.reserved2 });
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Size of stubs:", sect.reserved2 });
     } else if (sect.@"type"() == macho.S_NON_LAZY_SYMBOL_POINTERS) {
-        try writer.print(fmt, .{ "Indirect sym index:", "", sect.reserved1 });
-        try writer.print(fmt, .{ "Reserved 2:", "", sect.reserved2 });
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
     } else if (sect.@"type"() == macho.S_LAZY_SYMBOL_POINTERS) {
-        try writer.print(fmt, .{ "Indirect sym index:", "", sect.reserved1 });
-        try writer.print(fmt, .{ "Reserved 2:", "", sect.reserved2 });
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
     } else {
-        try writer.print(fmt, .{ "Reserved 1:", "", sect.reserved1 });
-        try writer.print(fmt, .{ "Reserved 2:", "", sect.reserved2 });
+        try writer.print(f.fmt("x"), .{ "Reserved 1:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
     }
-    try writer.print(fmt, .{ "Reserved 3:", "", sect.reserved3 });
+    try writer.print(f.fmt("x"), .{ "Reserved 3:", sect.reserved3 });
 }
 
 pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
@@ -441,7 +356,6 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
 }
 
 fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
-    _ = self;
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
