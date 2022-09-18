@@ -70,131 +70,54 @@ pub fn printHeader(self: ZachO, writer: anytype) !void {
         else => "Unknown",
     };
 
-    const fmt = "  {s: <25} {s: <15} ({x})\n";
+    const fmt = struct {
+        pub fn fmt(comptime specifier: []const u8) []const u8 {
+            return "  {s: <25} {" ++ specifier ++ ": >15}\n";
+        }
+    };
 
     try writer.print("Header\n", .{});
-    try writer.print(fmt, .{ "Magic number:", "", header.magic });
-    try writer.print(fmt, .{ "CPU type:", cputype, header.cputype });
-    try writer.print(fmt, .{ "CPU sub-type:", cpusubtype, header.cpusubtype });
-    try writer.print(fmt, .{ "File type:", filetype, header.filetype });
-    try writer.print(fmt, .{ "Number of load commands:", "", header.ncmds });
-    try writer.print(fmt, .{ "Size of load commands:", "", header.sizeofcmds });
-    try writer.print(fmt, .{ "Flags:", "", header.flags });
+    try writer.print(fmt.fmt("x"), .{ "Magic number:", header.magic });
+    try writer.print(fmt.fmt("s"), .{ "CPU type:", cputype });
+    try writer.print(fmt.fmt("s"), .{ "CPU sub-type:", cpusubtype });
+    try writer.print(fmt.fmt("s"), .{ "File type:", filetype });
+    try writer.print(fmt.fmt("x"), .{ "Number of load commands:", header.ncmds });
+    try writer.print(fmt.fmt("x"), .{ "Size of load commands:", header.sizeofcmds });
+    try writer.print(fmt.fmt("x"), .{ "Flags:", header.flags });
 
     if (header.flags > 0) {
-        const flags_fmt = "      {s: <37} ({x})\n";
+        const flags_fmt = "      {s: <37}\n";
 
-        if (header.flags & macho.MH_NOUNDEFS != 0) try writer.print(flags_fmt, .{
-            "MH_NOUNDEFS",
-            macho.MH_NOUNDEFS,
-        });
-        if (header.flags & macho.MH_INCRLINK != 0) try writer.print(flags_fmt, .{
-            "MH_INCRLINK",
-            macho.MH_INCRLINK,
-        });
-        if (header.flags & macho.MH_DYLDLINK != 0) try writer.print(flags_fmt, .{
-            "MH_DYLDLINK",
-            macho.MH_DYLDLINK,
-        });
-        if (header.flags & macho.MH_BINDATLOAD != 0) try writer.print(flags_fmt, .{
-            "MH_BINDATLOAD",
-            macho.MH_BINDATLOAD,
-        });
-        if (header.flags & macho.MH_PREBOUND != 0) try writer.print(flags_fmt, .{
-            "MH_PREBOUND",
-            macho.MH_PREBOUND,
-        });
-        if (header.flags & macho.MH_SPLIT_SEGS != 0) try writer.print(flags_fmt, .{
-            "MH_SPLIT_SEGS",
-            macho.MH_SPLIT_SEGS,
-        });
-        if (header.flags & macho.MH_LAZY_INIT != 0) try writer.print(flags_fmt, .{
-            "MH_LAZY_INIT",
-            macho.MH_LAZY_INIT,
-        });
-        if (header.flags & macho.MH_TWOLEVEL != 0) try writer.print(flags_fmt, .{
-            "MH_TWOLEVEL",
-            macho.MH_TWOLEVEL,
-        });
-        if (header.flags & macho.MH_FORCE_FLAT != 0) try writer.print(flags_fmt, .{
-            "MH_FORCE_FLAT",
-            macho.MH_FORCE_FLAT,
-        });
-        if (header.flags & macho.MH_NOMULTIDEFS != 0) try writer.print(flags_fmt, .{
-            "MH_NOMULTIDEFS",
-            macho.MH_NOMULTIDEFS,
-        });
-        if (header.flags & macho.MH_NOFIXPREBINDING != 0) try writer.print(flags_fmt, .{
-            "MH_NOFIXPREBINDING",
-            macho.MH_NOFIXPREBINDING,
-        });
-        if (header.flags & macho.MH_PREBINDABLE != 0) try writer.print(flags_fmt, .{
-            "MH_PREBINDABLE",
-            macho.MH_PREBINDABLE,
-        });
-        if (header.flags & macho.MH_ALLMODSBOUND != 0) try writer.print(flags_fmt, .{
-            "MH_ALLMODSBOUND",
-            macho.MH_ALLMODSBOUND,
-        });
-        if (header.flags & macho.MH_SUBSECTIONS_VIA_SYMBOLS != 0) try writer.print(flags_fmt, .{
-            "MH_SUBSECTIONS_VIA_SYMBOLS",
-            macho.MH_SUBSECTIONS_VIA_SYMBOLS,
-        });
-        if (header.flags & macho.MH_CANONICAL != 0) try writer.print(flags_fmt, .{
-            "MH_CANONICAL",
-            macho.MH_CANONICAL,
-        });
-        if (header.flags & macho.MH_WEAK_DEFINES != 0) try writer.print(flags_fmt, .{
-            "MH_WEAK_DEFINES",
-            macho.MH_WEAK_DEFINES,
-        });
-        if (header.flags & macho.MH_BINDS_TO_WEAK != 0) try writer.print(flags_fmt, .{
-            "MH_BINDS_TO_WEAK",
-            macho.MH_BINDS_TO_WEAK,
-        });
-        if (header.flags & macho.MH_ALLOW_STACK_EXECUTION != 0) try writer.print(flags_fmt, .{
-            "MH_ALLOW_STACK_EXECUTION",
-            macho.MH_ALLOW_STACK_EXECUTION,
-        });
-        if (header.flags & macho.MH_ROOT_SAFE != 0) try writer.print(flags_fmt, .{
-            "MH_ROOT_SAFE",
-            macho.MH_ROOT_SAFE,
-        });
-        if (header.flags & macho.MH_SETUID_SAFE != 0) try writer.print(flags_fmt, .{
-            "MH_SETUID_SAFE",
-            macho.MH_SETUID_SAFE,
-        });
-        if (header.flags & macho.MH_NO_REEXPORTED_DYLIBS != 0) try writer.print(flags_fmt, .{
-            "MH_NO_REEXPORTED_DYLIBS",
-            macho.MH_NO_REEXPORTED_DYLIBS,
-        });
-        if (header.flags & macho.MH_PIE != 0) try writer.print(flags_fmt, .{
-            "MH_PIE",
-            macho.MH_PIE,
-        });
-        if (header.flags & macho.MH_DEAD_STRIPPABLE_DYLIB != 0) try writer.print(flags_fmt, .{
-            "MH_DEAD_STRIPPABLE_DYLIB",
-            macho.MH_DEAD_STRIPPABLE_DYLIB,
-        });
-        if (header.flags & macho.MH_HAS_TLV_DESCRIPTORS != 0) try writer.print(flags_fmt, .{
-            "MH_HAS_TLV_DESCRIPTORS",
-            macho.MH_HAS_TLV_DESCRIPTORS,
-        });
-        if (header.flags & macho.MH_NO_HEAP_EXECUTION != 0) try writer.print(flags_fmt, .{
-            "MH_NO_HEAP_EXECUTION",
-            macho.MH_NO_HEAP_EXECUTION,
-        });
-        if (header.flags & macho.MH_APP_EXTENSION_SAFE != 0) try writer.print(flags_fmt, .{
-            "MH_APP_EXTENSION_SAFE",
-            macho.MH_APP_EXTENSION_SAFE,
-        });
-        if (header.flags & macho.MH_NLIST_OUTOFSYNC_WITH_DYLDINFO != 0) try writer.print(flags_fmt, .{
-            "MH_NLIST_OUTOFSYNC_WITH_DYLDINFO",
-            macho.MH_NLIST_OUTOFSYNC_WITH_DYLDINFO,
-        });
+        if (header.flags & macho.MH_NOUNDEFS != 0) try writer.print(flags_fmt, .{"MH_NOUNDEFS"});
+        if (header.flags & macho.MH_INCRLINK != 0) try writer.print(flags_fmt, .{"MH_INCRLINK"});
+        if (header.flags & macho.MH_DYLDLINK != 0) try writer.print(flags_fmt, .{"MH_DYLDLINK"});
+        if (header.flags & macho.MH_BINDATLOAD != 0) try writer.print(flags_fmt, .{"MH_BINDATLOAD"});
+        if (header.flags & macho.MH_PREBOUND != 0) try writer.print(flags_fmt, .{"MH_PREBOUND"});
+        if (header.flags & macho.MH_SPLIT_SEGS != 0) try writer.print(flags_fmt, .{"MH_SPLIT_SEGS"});
+        if (header.flags & macho.MH_LAZY_INIT != 0) try writer.print(flags_fmt, .{"MH_LAZY_INIT"});
+        if (header.flags & macho.MH_TWOLEVEL != 0) try writer.print(flags_fmt, .{"MH_TWOLEVEL"});
+        if (header.flags & macho.MH_FORCE_FLAT != 0) try writer.print(flags_fmt, .{"MH_FORCE_FLAT"});
+        if (header.flags & macho.MH_NOMULTIDEFS != 0) try writer.print(flags_fmt, .{"MH_NOMULTIDEFS"});
+        if (header.flags & macho.MH_NOFIXPREBINDING != 0) try writer.print(flags_fmt, .{"MH_NOFIXPREBINDING"});
+        if (header.flags & macho.MH_PREBINDABLE != 0) try writer.print(flags_fmt, .{"MH_PREBINDABLE"});
+        if (header.flags & macho.MH_ALLMODSBOUND != 0) try writer.print(flags_fmt, .{"MH_ALLMODSBOUND"});
+        if (header.flags & macho.MH_SUBSECTIONS_VIA_SYMBOLS != 0) try writer.print(flags_fmt, .{"MH_SUBSECTIONS_VIA_SYMBOLS"});
+        if (header.flags & macho.MH_CANONICAL != 0) try writer.print(flags_fmt, .{"MH_CANONICAL"});
+        if (header.flags & macho.MH_WEAK_DEFINES != 0) try writer.print(flags_fmt, .{"MH_WEAK_DEFINES"});
+        if (header.flags & macho.MH_BINDS_TO_WEAK != 0) try writer.print(flags_fmt, .{"MH_BINDS_TO_WEAK"});
+        if (header.flags & macho.MH_ALLOW_STACK_EXECUTION != 0) try writer.print(flags_fmt, .{"MH_ALLOW_STACK_EXECUTION"});
+        if (header.flags & macho.MH_ROOT_SAFE != 0) try writer.print(flags_fmt, .{"MH_ROOT_SAFE"});
+        if (header.flags & macho.MH_SETUID_SAFE != 0) try writer.print(flags_fmt, .{"MH_SETUID_SAFE"});
+        if (header.flags & macho.MH_NO_REEXPORTED_DYLIBS != 0) try writer.print(flags_fmt, .{"MH_NO_REEXPORTED_DYLIBS"});
+        if (header.flags & macho.MH_PIE != 0) try writer.print(flags_fmt, .{"MH_PIE"});
+        if (header.flags & macho.MH_DEAD_STRIPPABLE_DYLIB != 0) try writer.print(flags_fmt, .{"MH_DEAD_STRIPPABLE_DYLIB"});
+        if (header.flags & macho.MH_HAS_TLV_DESCRIPTORS != 0) try writer.print(flags_fmt, .{"MH_HAS_TLV_DESCRIPTORS"});
+        if (header.flags & macho.MH_NO_HEAP_EXECUTION != 0) try writer.print(flags_fmt, .{"MH_NO_HEAP_EXECUTION"});
+        if (header.flags & macho.MH_APP_EXTENSION_SAFE != 0) try writer.print(flags_fmt, .{"MH_APP_EXTENSION_SAFE"});
+        if (header.flags & macho.MH_NLIST_OUTOFSYNC_WITH_DYLDINFO != 0) try writer.print(flags_fmt, .{"MH_NLIST_OUTOFSYNC_WITH_DYLDINFO"});
     }
 
-    try writer.print(fmt, .{ "Reserved:", "", header.reserved });
+    try writer.print(fmt.fmt("x"), .{ "Reserved:", header.reserved });
     try writer.writeByte('\n');
 }
 
