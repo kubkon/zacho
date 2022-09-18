@@ -919,6 +919,145 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
 // pub const LEAF_CERT = 0;
 // pub const ROOT_CERT = -1;
 
+pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
+    var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
+    defer segments.deinit();
+
+    var sections = std.AutoHashMap(u8, std.ArrayList(macho.section_64)).init(self.gpa);
+    defer {
+        var it = sections.valueIterator();
+        while (it.next()) |value_ptr| {
+            value_ptr.deinit();
+        }
+        sections.deinit();
+    }
+
+    var sorted_by_address = std.ArrayList(u8).init(self.gpa);
+    defer sorted_by_address.deinit();
+
+    var sorted_by_offset = std.ArrayList(u8).init(self.gpa);
+    defer sorted_by_offset.deinit();
+
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            const seg_id = @intCast(u8, segments.items.len);
+            try segments.append(seg);
+
+            const headers = lc.getSections();
+            if (headers.len > 0) {
+                const gop = try sections.getOrPut(seg_id);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = std.ArrayList(macho.section_64).init(self.gpa);
+                }
+                try gop.value_ptr.ensureUnusedCapacity(headers.len);
+                gop.value_ptr.appendSliceAssumeCapacity(headers);
+            }
+
+            for (sorted_by_address.items) |other_id, i| {
+                const other_seg = segments.items[other_id];
+                if (seg.vmaddr < other_seg.vmaddr) {
+                    try sorted_by_address.insert(i, seg_id);
+                    break;
+                }
+            } else try sorted_by_address.append(seg_id);
+
+            for (sorted_by_offset.items) |other_id, i| {
+                const other_seg = segments.items[other_id];
+                if (seg.fileoff < other_seg.fileoff) {
+                    try sorted_by_offset.insert(i, seg_id);
+                    break;
+                }
+            } else try sorted_by_offset.append(seg_id);
+        },
+        else => continue,
+    };
+
+    if (segments.items.len == 0) {
+        try writer.writeAll("\nNo segments found.\n");
+        return;
+    }
+
+    try writer.writeAll("\nMEMORY LAYOUT:\n");
+
+    var i: u8 = 0;
+    while (i < sorted_by_address.items.len) : (i += 1) {
+        const seg_id = sorted_by_address.items[i];
+        const seg = segments.items[seg_id];
+        try writer.print("  {s: >20} ---------- {x}\n", .{ seg.segName(), seg.vmaddr });
+        try writer.print("  {s: >20} |\n", .{""});
+
+        if (sections.get(seg_id)) |headers| {
+            try writer.writeByte('\n');
+            for (headers.items) |header, header_id| {
+                try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.addr });
+                try writer.print("    {s: >20} |\n", .{""});
+                try writer.print("    {s: >20} -------- {x}\n", .{ "", header.addr + header.size });
+                if (header_id < headers.items.len - 1) {
+                    const next_header = headers.items[header_id + 1];
+                    if (next_header.addr < header.addr + header.size) {
+                        try writer.writeAll("      CURRENT SECTION OVERLAPS THE NEXT ONE\n");
+                    }
+                }
+            }
+            try writer.writeByte('\n');
+        } else {
+            try writer.print("  {s: >20} |\n", .{""});
+        }
+
+        try writer.print("  {s: >20} |\n", .{""});
+        try writer.print("  {s: >20} ---------- {x}\n", .{ "", seg.vmaddr + seg.vmsize });
+        if (i < sorted_by_address.items.len - 1) {
+            const next_seg_id = sorted_by_address.items[i + 1];
+            const next_seg = segments.items[next_seg_id];
+            if (next_seg.vmaddr < seg.vmaddr + seg.vmsize) {
+                try writer.writeAll("    CURRENT SEGMENT OVERLAPS THE NEXT ONE\n");
+            }
+        }
+        try writer.writeByte('\n');
+    }
+
+    try writer.writeAll("\nIN-FILE LAYOUT:\n");
+
+    i = 0;
+    while (i < sorted_by_offset.items.len) : (i += 1) {
+        const seg_id = sorted_by_offset.items[i];
+        const seg = segments.items[seg_id];
+        try writer.print("  {s: >20} ---------- {x}\n", .{ seg.segName(), seg.fileoff });
+        try writer.print("  {s: >20} |\n", .{""});
+
+        if (sections.get(seg_id)) |headers| {
+            try writer.writeByte('\n');
+            for (headers.items) |header, header_id| {
+                try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.offset });
+                try writer.print("    {s: >20} |\n", .{""});
+                try writer.print("    {s: >20} -------- {x}\n", .{ "", header.offset + header.size });
+                if (header_id < headers.items.len - 1) {
+                    const next_header = headers.items[header_id + 1];
+                    if (next_header.offset < header.offset + header.size) {
+                        try writer.writeAll("      CURRENT SECTION OVERLAPS THE NEXT ONE\n");
+                    }
+                }
+            }
+            try writer.writeByte('\n');
+        } else {
+            try writer.print("  {s: >20} |\n", .{""});
+        }
+
+        try writer.print("  {s: >20} |\n", .{""});
+        try writer.print("  {s: >20} ---------- {x}\n", .{ "", seg.fileoff + seg.filesize });
+        if (i < sorted_by_offset.items.len - 1) {
+            const next_seg_id = sorted_by_offset.items[i + 1];
+            const next_seg = segments.items[next_seg_id];
+            if (next_seg.fileoff < seg.fileoff + seg.filesize) {
+                try writer.writeAll("    CURRENT SEGMENT OVERLAPS THE NEXT ONE\n");
+            }
+        }
+        try writer.writeByte('\n');
+    }
+}
+
 fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     const data = self.data[@sizeOf(macho.mach_header_64)..][0..self.header.sizeofcmds];
     return .{
