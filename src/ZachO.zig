@@ -12,150 +12,355 @@ const Allocator = std.mem.Allocator;
 const ZigKit = @import("ZigKit");
 const CMSDecoder = ZigKit.Security.CMSDecoder;
 
-const commands = @import("ZachO/commands.zig");
-const LoadCommand = commands.LoadCommand;
-const SegmentCommand = commands.SegmentCommand;
-
-allocator: Allocator,
-file: ?fs.File = null,
-
-/// Mach-O header
-header: ?macho.mach_header_64 = null,
-
-/// Load commands
-load_commands: std.ArrayListUnmanaged(LoadCommand) = .{},
-
-/// Data
-data: std.ArrayListUnmanaged(u8) = .{},
-
-/// Code signature load command
-code_signature_cmd: ?u16 = null,
-
-pub fn init(allocator: Allocator) ZachO {
-    return .{ .allocator = allocator };
-}
+gpa: Allocator,
+header: macho.mach_header_64,
+data: []align(@alignOf(u64)) const u8,
 
 pub fn deinit(self: *ZachO) void {
-    for (self.load_commands.items) |*cmd| {
-        cmd.deinit(self.allocator);
-    }
-    self.load_commands.deinit(self.allocator);
-    self.data.deinit(self.allocator);
+    self.gpa.free(self.data);
 }
 
-pub fn closeFiles(self: *ZachO) void {
-    if (self.file) |file| {
-        file.close();
-    }
-    self.file = null;
-}
+pub fn parse(gpa: Allocator, file: fs.File) !ZachO {
+    const file_size = try file.getEndPos();
+    const data = try file.readToEndAllocOptions(gpa, file_size, file_size, @alignOf(u64), null);
+    var self = ZachO{
+        .gpa = gpa,
+        .header = undefined,
+        .data = data,
+    };
 
-pub fn parse(self: *ZachO, file: fs.File) !void {
-    self.file = file;
-    var reader = file.reader();
+    var stream = std.io.fixedBufferStream(self.data);
+    const reader = stream.reader();
+    const header = try reader.readStruct(macho.mach_header_64);
 
-    self.header = try reader.readStruct(macho.mach_header_64);
+    if (header.magic != macho.MH_MAGIC_64) return error.InvalidMagic;
 
-    const ncmds = self.header.?.ncmds;
-    try self.load_commands.ensureTotalCapacity(self.allocator, ncmds);
+    self.header = header;
 
-    var i: u16 = 0;
-    while (i < ncmds) : (i += 1) {
-        const cmd = try LoadCommand.parse(self.allocator, reader);
-        switch (cmd.cmd()) {
-            macho.LC.CODE_SIGNATURE => self.code_signature_cmd = i,
-            else => {},
-        }
-        self.load_commands.appendAssumeCapacity(cmd);
-    }
-
-    // TODO parse memory mapped segments
-    try reader.context.seekTo(0);
-    const file_size = try reader.context.getEndPos();
-    var data = try std.ArrayList(u8).initCapacity(self.allocator, file_size);
-    try reader.readAllArrayList(&data, file_size);
-    self.data = data.moveToUnmanaged();
+    return self;
 }
 
 pub fn printHeader(self: ZachO, writer: anytype) !void {
-    const header = &self.header.?;
+    const header = self.header;
+
+    const cputype = switch (header.cputype) {
+        macho.CPU_TYPE_ARM64 => "ARM64",
+        macho.CPU_TYPE_X86_64 => "X86_64",
+        else => "Unknown",
+    };
+
+    const cpusubtype = switch (header.cpusubtype) {
+        macho.CPU_SUBTYPE_ARM_ALL => "ARM_ALL",
+        macho.CPU_SUBTYPE_X86_64_ALL => "X86_64_ALL",
+        else => "Unknown",
+    };
+
+    const filetype = switch (header.filetype) {
+        macho.MH_OBJECT => "MH_OBJECT",
+        macho.MH_EXECUTE => "MH_EXECUTE",
+        macho.MH_FVMLIB => "MH_FVMLIB",
+        macho.MH_CORE => "MH_CORE",
+        macho.MH_PRELOAD => "MH_PRELOAD",
+        macho.MH_DYLIB => "MH_DYLIB",
+        macho.MH_DYLINKER => "MH_DYLINKER",
+        macho.MH_BUNDLE => "MH_BUNDLE",
+        macho.MH_DYLIB_STUB => "MH_DYLIB_STUB",
+        macho.MH_DSYM => "MH_DSYM",
+        macho.MH_KEXT_BUNDLE => "MH_KEXT_BUNDLE",
+        else => "Unknown",
+    };
+
+    const fmt = struct {
+        pub fn fmt(comptime specifier: []const u8) []const u8 {
+            return "  {s: <25} {" ++ specifier ++ ": >15}\n";
+        }
+    };
+
     try writer.print("Header\n", .{});
-    try writer.print("  Magic number: 0x{x}\n", .{header.magic});
-    try writer.print("  CPU type: 0x{x}\n", .{header.cputype});
-    try writer.print("  CPU sub-type: 0x{x}\n", .{header.cpusubtype});
-    try writer.print("  File type: 0x{x}\n", .{header.filetype});
-    try writer.print("  Number of load commands: {}\n", .{header.ncmds});
-    try writer.print("  Size of load commands: {}\n", .{header.sizeofcmds});
-    try writer.print("  Flags: 0x{x}\n", .{header.flags});
-    try writer.print("  Reserved: 0x{x}\n", .{header.reserved});
+    try writer.print(fmt.fmt("x"), .{ "Magic number:", header.magic });
+    try writer.print(fmt.fmt("s"), .{ "CPU type:", cputype });
+    try writer.print(fmt.fmt("s"), .{ "CPU sub-type:", cpusubtype });
+    try writer.print(fmt.fmt("s"), .{ "File type:", filetype });
+    try writer.print(fmt.fmt("x"), .{ "Number of load commands:", header.ncmds });
+    try writer.print(fmt.fmt("x"), .{ "Size of load commands:", header.sizeofcmds });
+    try writer.print(fmt.fmt("x"), .{ "Flags:", header.flags });
+
+    if (header.flags > 0) {
+        const flags_fmt = "      {s: <37}\n";
+
+        if (header.flags & macho.MH_NOUNDEFS != 0) try writer.print(flags_fmt, .{"MH_NOUNDEFS"});
+        if (header.flags & macho.MH_INCRLINK != 0) try writer.print(flags_fmt, .{"MH_INCRLINK"});
+        if (header.flags & macho.MH_DYLDLINK != 0) try writer.print(flags_fmt, .{"MH_DYLDLINK"});
+        if (header.flags & macho.MH_BINDATLOAD != 0) try writer.print(flags_fmt, .{"MH_BINDATLOAD"});
+        if (header.flags & macho.MH_PREBOUND != 0) try writer.print(flags_fmt, .{"MH_PREBOUND"});
+        if (header.flags & macho.MH_SPLIT_SEGS != 0) try writer.print(flags_fmt, .{"MH_SPLIT_SEGS"});
+        if (header.flags & macho.MH_LAZY_INIT != 0) try writer.print(flags_fmt, .{"MH_LAZY_INIT"});
+        if (header.flags & macho.MH_TWOLEVEL != 0) try writer.print(flags_fmt, .{"MH_TWOLEVEL"});
+        if (header.flags & macho.MH_FORCE_FLAT != 0) try writer.print(flags_fmt, .{"MH_FORCE_FLAT"});
+        if (header.flags & macho.MH_NOMULTIDEFS != 0) try writer.print(flags_fmt, .{"MH_NOMULTIDEFS"});
+        if (header.flags & macho.MH_NOFIXPREBINDING != 0) try writer.print(flags_fmt, .{"MH_NOFIXPREBINDING"});
+        if (header.flags & macho.MH_PREBINDABLE != 0) try writer.print(flags_fmt, .{"MH_PREBINDABLE"});
+        if (header.flags & macho.MH_ALLMODSBOUND != 0) try writer.print(flags_fmt, .{"MH_ALLMODSBOUND"});
+        if (header.flags & macho.MH_SUBSECTIONS_VIA_SYMBOLS != 0) try writer.print(flags_fmt, .{"MH_SUBSECTIONS_VIA_SYMBOLS"});
+        if (header.flags & macho.MH_CANONICAL != 0) try writer.print(flags_fmt, .{"MH_CANONICAL"});
+        if (header.flags & macho.MH_WEAK_DEFINES != 0) try writer.print(flags_fmt, .{"MH_WEAK_DEFINES"});
+        if (header.flags & macho.MH_BINDS_TO_WEAK != 0) try writer.print(flags_fmt, .{"MH_BINDS_TO_WEAK"});
+        if (header.flags & macho.MH_ALLOW_STACK_EXECUTION != 0) try writer.print(flags_fmt, .{"MH_ALLOW_STACK_EXECUTION"});
+        if (header.flags & macho.MH_ROOT_SAFE != 0) try writer.print(flags_fmt, .{"MH_ROOT_SAFE"});
+        if (header.flags & macho.MH_SETUID_SAFE != 0) try writer.print(flags_fmt, .{"MH_SETUID_SAFE"});
+        if (header.flags & macho.MH_NO_REEXPORTED_DYLIBS != 0) try writer.print(flags_fmt, .{"MH_NO_REEXPORTED_DYLIBS"});
+        if (header.flags & macho.MH_PIE != 0) try writer.print(flags_fmt, .{"MH_PIE"});
+        if (header.flags & macho.MH_DEAD_STRIPPABLE_DYLIB != 0) try writer.print(flags_fmt, .{"MH_DEAD_STRIPPABLE_DYLIB"});
+        if (header.flags & macho.MH_HAS_TLV_DESCRIPTORS != 0) try writer.print(flags_fmt, .{"MH_HAS_TLV_DESCRIPTORS"});
+        if (header.flags & macho.MH_NO_HEAP_EXECUTION != 0) try writer.print(flags_fmt, .{"MH_NO_HEAP_EXECUTION"});
+        if (header.flags & macho.MH_APP_EXTENSION_SAFE != 0) try writer.print(flags_fmt, .{"MH_APP_EXTENSION_SAFE"});
+        if (header.flags & macho.MH_NLIST_OUTOFSYNC_WITH_DYLDINFO != 0) try writer.print(flags_fmt, .{"MH_NLIST_OUTOFSYNC_WITH_DYLDINFO"});
+    }
+
+    try writer.print(fmt.fmt("x"), .{ "Reserved:", header.reserved });
+    try writer.writeByte('\n');
 }
 
 pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
-    for (self.load_commands.items) |cmd| {
-        try writer.print("{}\n", .{cmd});
+    const fmt = struct {
+        pub fn fmt(comptime specifier: []const u8) []const u8 {
+            return "  {s: <20} {" ++ specifier ++ ": >30}\n";
+        }
+    };
+
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| {
+        try writer.print("LOAD COMMAND {d}:\n", .{it.index - 1});
+        try printGenericLC(fmt, lc, writer);
+
+        switch (lc.cmd()) {
+            .SEGMENT_64 => try printSegmentLC(fmt, lc, writer),
+            .DYLD_INFO_ONLY => try printDyldInfoOnlyLC(fmt, lc, writer),
+            else => {},
+        }
+
+        try writer.writeByte('\n');
+    }
+}
+
+fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
+    try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.dyld_info_command).?;
+    try writer.print(f.fmt("x"), .{ "Rebase offset:", cmd.rebase_off });
+    try writer.print(f.fmt("x"), .{ "Rebase size:", cmd.rebase_size });
+    try writer.print(f.fmt("x"), .{ "Binding offset:", cmd.bind_off });
+    try writer.print(f.fmt("x"), .{ "Binding size:", cmd.bind_size });
+    try writer.print(f.fmt("x"), .{ "Weak binding offset:", cmd.weak_bind_off });
+    try writer.print(f.fmt("x"), .{ "Weak binding offset:", cmd.weak_bind_size });
+    try writer.print(f.fmt("x"), .{ "Lazy binding size:", cmd.lazy_bind_off });
+    try writer.print(f.fmt("x"), .{ "Lazy binding size:", cmd.lazy_bind_size });
+    try writer.print(f.fmt("x"), .{ "Export offset:", cmd.export_off });
+    try writer.print(f.fmt("x"), .{ "Export size:", cmd.export_size });
+}
+
+fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const seg = lc.cast(macho.segment_command_64).?;
+    try writer.print(f.fmt("s"), .{ "Segment name:", seg.segName() });
+    try writer.print(f.fmt("x"), .{ "VM address:", seg.vmaddr });
+    try writer.print(f.fmt("x"), .{ "VM size:", seg.vmsize });
+    try writer.print(f.fmt("x"), .{ "File offset:", seg.fileoff });
+    try writer.print(f.fmt("x"), .{ "File size:", seg.filesize });
+
+    const prot_fmt = "      {s: <37}\n";
+    try writer.print(f.fmt("x"), .{ "Max VM protection:", seg.maxprot });
+    try printProtectionFlags(prot_fmt, seg.maxprot, writer);
+
+    try writer.print(f.fmt("x"), .{ "Init VM protection:", seg.initprot });
+    try printProtectionFlags(prot_fmt, seg.initprot, writer);
+
+    try writer.print(f.fmt("x"), .{ "Number of sections:", seg.nsects });
+    try writer.print(f.fmt("x"), .{ "Flags:", seg.flags });
+
+    if (seg.nsects > 0) {
+        const sect_fmt = struct {
+            pub fn fmt(comptime specifier: []const u8) []const u8 {
+                return "    {s: <20} {" ++ specifier ++ ": >28}\n";
+            }
+        };
+        try writer.writeByte('\n');
+        for (lc.getSections()) |sect| {
+            try writer.print("  SECTION HEADER:\n", .{});
+            try printSectionHeader(sect_fmt, sect, writer);
+        }
+    }
+}
+
+fn printProtectionFlags(comptime f: []const u8, flags: macho.vm_prot_t, writer: anytype) !void {
+    if (flags == macho.PROT.NONE) try writer.print(f, .{"VM_PROT_NONE"});
+    if (flags & macho.PROT.READ != 0) try writer.print(f, .{"VM_PROT_READ"});
+    if (flags & macho.PROT.WRITE != 0) try writer.print(f, .{"VM_PROT_WRITE"});
+    if (flags & macho.PROT.EXEC != 0) try writer.print(f, .{"VM_PROT_EXEC"});
+    if (flags & macho.PROT.COPY != 0) try writer.print(f, .{"VM_PROT_COPY"});
+}
+
+fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void {
+    try writer.print(f.fmt("s"), .{ "Section name:", sect.sectName() });
+    try writer.print(f.fmt("s"), .{ "Segment name:", sect.segName() });
+    try writer.print(f.fmt("x"), .{ "Address:", sect.addr });
+    try writer.print(f.fmt("x"), .{ "Size:", sect.size });
+    try writer.print(f.fmt("x"), .{ "Offset:", sect.offset });
+    try writer.print(f.fmt("x"), .{ "Alignment:", std.math.powi(u32, 2, sect.@"align") catch unreachable });
+    try writer.print(f.fmt("x"), .{ "Relocs offset:", sect.reloff });
+    try writer.print(f.fmt("x"), .{ "Number of relocs:", sect.nreloc });
+    try writer.print(f.fmt("x"), .{ "Flags:", sect.flags });
+
+    const flag_fmt = "        {s: <35}\n";
+    switch (sect.@"type"()) {
+        macho.S_REGULAR => try writer.print(flag_fmt, .{"S_REGULAR"}),
+        macho.S_ZEROFILL => try writer.print(flag_fmt, .{"S_ZEROFILL"}),
+        macho.S_CSTRING_LITERALS => try writer.print(flag_fmt, .{"S_CSTRING_LITERALS"}),
+        macho.S_4BYTE_LITERALS => try writer.print(flag_fmt, .{"S_4BYTE_LITERALS"}),
+        macho.S_8BYTE_LITERALS => try writer.print(flag_fmt, .{"S_8BYTE_LITERALS"}),
+        macho.S_LITERAL_POINTERS => try writer.print(flag_fmt, .{"S_LITERAL_POINTERS"}),
+        macho.S_NON_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{"S_NON_LAZY_SYMBOL_POINTERS"}),
+        macho.S_LAZY_SYMBOL_POINTERS => try writer.print(flag_fmt, .{"S_LAZY_SYMBOL_POINTERS"}),
+        macho.S_SYMBOL_STUBS => try writer.print(flag_fmt, .{"S_SYMBOL_STUBS"}),
+        macho.S_MOD_INIT_FUNC_POINTERS => try writer.print(flag_fmt, .{"S_MOD_INIT_FUNC_POINTERS"}),
+        macho.S_MOD_TERM_FUNC_POINTERS => try writer.print(flag_fmt, .{"S_MOD_TERM_FUNC_POINTERS"}),
+        macho.S_COALESCED => try writer.print(flag_fmt, .{"S_COALESCED"}),
+        macho.S_GB_ZEROFILL => try writer.print(flag_fmt, .{"S_GB_ZEROFILL"}),
+        macho.S_INTERPOSING => try writer.print(flag_fmt, .{"S_INTERPOSING"}),
+        macho.S_16BYTE_LITERALS => try writer.print(flag_fmt, .{"S_16BYTE_LITERALS"}),
+        macho.S_DTRACE_DOF => try writer.print(flag_fmt, .{"S_DTRACE_DOF"}),
+        macho.S_THREAD_LOCAL_REGULAR => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_REGULAR"}),
+        macho.S_THREAD_LOCAL_ZEROFILL => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_ZEROFILl"}),
+        macho.S_THREAD_LOCAL_VARIABLE_POINTERS => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_VARIABLE_POINTERS"}),
+        macho.S_THREAD_LOCAL_INIT_FUNCTION_POINTERS => try writer.print(flag_fmt, .{"S_THREAD_LOCAL_INIT_FUNCTION_POINTERS"}),
+        macho.S_INIT_FUNC_OFFSETS => try writer.print(flag_fmt, .{"S_INIT_FUNC_OFFSETS"}),
+        else => {},
+    }
+    const attrs = sect.@"attrs"();
+    if (attrs > 0) {
+        if (attrs & macho.S_ATTR_DEBUG != 0) try writer.print(flag_fmt, .{"S_ATTR_DEBUG"});
+        if (attrs & macho.S_ATTR_PURE_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{"S_ATTR_PURE_INSTRUCTIONS"});
+        if (attrs & macho.S_ATTR_NO_TOC != 0) try writer.print(flag_fmt, .{"S_ATTR_NO_TOC"});
+        if (attrs & macho.S_ATTR_STRIP_STATIC_SYMS != 0) try writer.print(flag_fmt, .{"S_ATTR_STRIP_STATIC_SYMS"});
+        if (attrs & macho.S_ATTR_NO_DEAD_STRIP != 0) try writer.print(flag_fmt, .{"S_ATTR_NO_DEAD_STRIP"});
+        if (attrs & macho.S_ATTR_LIVE_SUPPORT != 0) try writer.print(flag_fmt, .{"S_ATTR_LIVE_SUPPORT"});
+        if (attrs & macho.S_ATTR_SELF_MODIFYING_CODE != 0) try writer.print(flag_fmt, .{"S_ATTR_SELF_MODIFYING_CODE"});
+        if (attrs & macho.S_ATTR_SOME_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{"S_ATTR_SOME_INSTRUCTIONS"});
+        if (attrs & macho.S_ATTR_EXT_RELOC != 0) try writer.print(flag_fmt, .{"S_ATTR_EXT_RELOC"});
+        if (attrs & macho.S_ATTR_LOC_RELOC != 0) try writer.print(flag_fmt, .{"S_ATTR_LOC_RELOC"});
+    }
+
+    if (sect.@"type"() == macho.S_SYMBOL_STUBS) {
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Size of stubs:", sect.reserved2 });
+    } else if (sect.@"type"() == macho.S_NON_LAZY_SYMBOL_POINTERS) {
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
+    } else if (sect.@"type"() == macho.S_LAZY_SYMBOL_POINTERS) {
+        try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
+    } else {
+        try writer.print(f.fmt("x"), .{ "Reserved 1:", sect.reserved1 });
+        try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
+    }
+    try writer.print(f.fmt("x"), .{ "Reserved 3:", sect.reserved3 });
+}
+
+pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
+    const lc = self.getDyldInfoOnlyLC() orelse {
+        return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
+    };
+
+    try writer.writeAll("REBASE INFO:\n");
+    const rebase_data = self.data[lc.rebase_off..][0..lc.rebase_size];
+    try self.parseAndPrintRebaseInfo(rebase_data, writer);
+}
+
+fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+    var stream = std.io.fixedBufferStream(data);
+    var creader = std.io.countingReader(stream.reader());
+    const reader = creader.reader();
+
+    var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
+    defer segments.deinit();
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => try segments.append(lc.cast(macho.segment_command_64).?),
+        else => {},
+    };
+
+    const fmt_value = "    {x: <8} {s: <50} {s: >20} ({x})\n";
+    const fmt_ptr = "      {x: >8} => {x: <8}\n";
+
+    var seg_id: ?u8 = null;
+    var seg_offset: ?u64 = null;
+    while (true) {
+        const byte = reader.readByte() catch break;
+        const opc = byte & macho.REBASE_OPCODE_MASK;
+        const imm = byte & macho.REBASE_IMMEDIATE_MASK;
+        switch (opc) {
+            macho.REBASE_OPCODE_DONE => {
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                break;
+            },
+            macho.REBASE_OPCODE_SET_TYPE_IMM => {
+                const tt = switch (imm) {
+                    macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
+                    macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
+                    macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
+                    else => "UNKNOWN",
+                };
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+            },
+            macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
+                seg_id = imm;
+                const start = creader.bytes_read;
+                seg_offset = try std.leb.readULEB128(u64, reader);
+                const end = creader.bytes_read;
+
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
+                try writer.print(fmt_value, .{ std.fmt.fmtSliceHexLower(data[start..end]), "", "offset", seg_offset.? });
+            },
+            macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
+                const ntimes = imm;
+
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_IMM_TIMES", "count", ntimes });
+                try writer.writeByte('\n');
+                try writer.writeAll("    ACTIONS:\n");
+
+                const seg = segments.items[seg_id.?];
+                var addr = seg.vmaddr + seg_offset.?;
+                var count: usize = 0;
+                while (count < ntimes) : (count += 1) {
+                    addr += count * @sizeOf(u64);
+                    if (addr > seg.vmaddr + seg.vmsize) {
+                        std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
+                            addr,
+                            seg.segName(),
+                            imm,
+                        });
+                        continue;
+                    }
+                    const ptr_offset = seg.fileoff + seg_offset.?;
+                    const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                    try writer.print(fmt_ptr, .{ addr, ptr });
+                }
+                try writer.writeByte('\n');
+            },
+            else => {},
+        }
     }
 }
 
 pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
-    return if (self.code_signature_cmd) |code_sig|
-        self.formatCodeSignatureData(self.load_commands.items[code_sig].LinkeditData, writer)
-    else
-        writer.print("LC_CODE_SIGNATURE load command not found\n", .{});
-}
-
-pub fn format(
-    self: ZachO,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = fmt;
-    _ = options;
-
-    try self.printHeader(writer);
-    try writer.print("\n", .{});
-
-    try self.printLoadCommands(writer);
-    try writer.print("\n", .{});
-
-    for (self.load_commands.items) |cmd| {
-        switch (cmd) {
-            .Segment => |seg| try self.formatData(seg, writer),
-            .CodeSignature => |csig| try self.formatCodeSignatureData(csig, writer),
-            else => {},
-        }
-    }
-}
-
-fn formatData(self: ZachO, segment_command: SegmentCommand, writer: anytype) !void {
-    const seg = &segment_command.inner;
-    const start_pos = seg.fileoff;
-    const end_pos = seg.fileoff + seg.filesize;
-
-    if (end_pos == start_pos) return;
-
-    try writer.print("{s}\n", .{seg.segname});
-    try writer.print("file = {{ {}, {} }}\n", .{ start_pos, end_pos });
-    try writer.print("address = {{ 0x{x:0<16}, 0x{x:0<16} }}\n\n", .{
-        seg.vmaddr,
-        seg.vmaddr + seg.vmsize,
-    });
-
-    for (segment_command.section_headers.items) |sect| {
-        const file_start = sect.offset;
-        const file_end = sect.offset + sect.size;
-        const addr_start = sect.addr;
-        const addr_end = sect.addr + sect.size;
-
-        try writer.print("  {s},{s}\n", .{ sect.segname, sect.sectname });
-        try writer.print("  file = {{ {}, {} }}\n", .{ file_start, file_end });
-        try writer.print("  address = {{ 0x{x:0<16}, 0x{x:0<16} }}\n\n", .{
-            addr_start,
-            addr_end,
-        });
-        try formatBinaryBlob(self.data.items[file_start..file_end], "  ", writer);
-        try writer.print("\n", .{});
-    }
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .CODE_SIGNATURE => return self.formatCodeSignatureData(lc.cast(macho.linkedit_data_command).?, writer),
+        else => continue,
+    };
+    return writer.print("LC_CODE_SIGNATURE load command not found\n", .{});
 }
 
 fn formatCodeSignatureData(
@@ -171,7 +376,7 @@ fn formatCodeSignatureData(
     try writer.print("Code signature data:\n", .{});
     try writer.print("file = {{ {}, {} }}\n\n", .{ start_pos, end_pos });
 
-    var data = self.data.items[start_pos..end_pos];
+    var data = self.data[start_pos..end_pos];
     var ptr = data;
     const magic = mem.readIntBig(u32, ptr[0..4]);
     const length = mem.readIntBig(u32, ptr[4..8]);
@@ -186,11 +391,11 @@ fn formatCodeSignatureData(
 
     if (magic != macho.CSMAGIC_EMBEDDED_SIGNATURE) {
         try writer.print("unknown signature type: 0x{x}\n", .{magic});
-        try formatBinaryBlob(self.data.items[start_pos..end_pos], .{}, writer);
+        try formatBinaryBlob(self.data[start_pos..end_pos], .{}, writer);
         return;
     }
 
-    var blobs = std.ArrayList(macho.BlobIndex).init(self.allocator);
+    var blobs = std.ArrayList(macho.BlobIndex).init(self.gpa);
     defer blobs.deinit();
     try blobs.ensureTotalCapacityPrecise(count);
 
@@ -309,7 +514,7 @@ fn formatCodeSignatureData(
 
                 var req_count = try reader.readIntBig(u32);
 
-                var req_blobs = std.ArrayList(macho.BlobIndex).init(self.allocator);
+                var req_blobs = std.ArrayList(macho.BlobIndex).init(self.gpa);
                 defer req_blobs.deinit();
                 try req_blobs.ensureTotalCapacityPrecise(req_count);
 
@@ -601,10 +806,6 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
     }
 }
 
-test "" {
-    std.testing.refAllDecls(@This());
-}
-
 const ExprOp = enum(u32) {
     op_false,
     op_true,
@@ -658,3 +859,171 @@ pub const EXPR_OP_GENERIC_SKIP: u32 = 0x40;
 
 pub const LEAF_CERT = 0;
 pub const ROOT_CERT = -1;
+
+pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
+    var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
+    defer segments.deinit();
+
+    var sections = std.AutoHashMap(u8, std.ArrayList(macho.section_64)).init(self.gpa);
+    defer {
+        var it = sections.valueIterator();
+        while (it.next()) |value_ptr| {
+            value_ptr.deinit();
+        }
+        sections.deinit();
+    }
+
+    var sorted_by_address = std.ArrayList(u8).init(self.gpa);
+    defer sorted_by_address.deinit();
+
+    var sorted_by_offset = std.ArrayList(u8).init(self.gpa);
+    defer sorted_by_offset.deinit();
+
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            const seg_id = @intCast(u8, segments.items.len);
+            try segments.append(seg);
+
+            const headers = lc.getSections();
+            if (headers.len > 0) {
+                const gop = try sections.getOrPut(seg_id);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = std.ArrayList(macho.section_64).init(self.gpa);
+                }
+                try gop.value_ptr.ensureUnusedCapacity(headers.len);
+                gop.value_ptr.appendSliceAssumeCapacity(headers);
+            }
+
+            for (sorted_by_address.items) |other_id, i| {
+                const other_seg = segments.items[other_id];
+                if (seg.vmaddr < other_seg.vmaddr) {
+                    try sorted_by_address.insert(i, seg_id);
+                    break;
+                }
+            } else try sorted_by_address.append(seg_id);
+
+            for (sorted_by_offset.items) |other_id, i| {
+                const other_seg = segments.items[other_id];
+                if (seg.fileoff < other_seg.fileoff) {
+                    try sorted_by_offset.insert(i, seg_id);
+                    break;
+                }
+            } else try sorted_by_offset.append(seg_id);
+        },
+        else => continue,
+    };
+
+    if (segments.items.len == 0) {
+        try writer.writeAll("\nNo segments found.\n");
+        return;
+    }
+
+    try writer.writeAll("\nMEMORY LAYOUT:\n");
+
+    var i: u8 = 0;
+    while (i < sorted_by_address.items.len) : (i += 1) {
+        const seg_id = sorted_by_address.items[i];
+        const seg = segments.items[seg_id];
+        try writer.print("  {s: >20} ---------- {x}\n", .{ seg.segName(), seg.vmaddr });
+        try writer.print("  {s: >20} |\n", .{""});
+
+        if (sections.get(seg_id)) |headers| {
+            try writer.writeByte('\n');
+            for (headers.items) |header, header_id| {
+                try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.addr });
+                try writer.print("    {s: >20} |\n", .{""});
+                try writer.print("    {s: >20} -------- {x}\n", .{ "", header.addr + header.size });
+                if (header_id < headers.items.len - 1) {
+                    const next_header = headers.items[header_id + 1];
+                    if (next_header.addr < header.addr + header.size) {
+                        try writer.writeAll("      CURRENT SECTION OVERLAPS THE NEXT ONE\n");
+                    }
+                }
+            }
+            try writer.writeByte('\n');
+        } else {
+            try writer.print("  {s: >20} |\n", .{""});
+        }
+
+        try writer.print("  {s: >20} |\n", .{""});
+        try writer.print("  {s: >20} ---------- {x}\n", .{ "", seg.vmaddr + seg.vmsize });
+        if (i < sorted_by_address.items.len - 1) {
+            const next_seg_id = sorted_by_address.items[i + 1];
+            const next_seg = segments.items[next_seg_id];
+            if (next_seg.vmaddr < seg.vmaddr + seg.vmsize) {
+                try writer.writeAll("    CURRENT SEGMENT OVERLAPS THE NEXT ONE\n");
+            }
+        }
+        try writer.writeByte('\n');
+    }
+
+    try writer.writeAll("\nIN-FILE LAYOUT:\n");
+
+    i = 0;
+    while (i < sorted_by_offset.items.len) : (i += 1) {
+        const seg_id = sorted_by_offset.items[i];
+        const seg = segments.items[seg_id];
+        try writer.print("  {s: >20} ---------- {x}\n", .{ seg.segName(), seg.fileoff });
+        try writer.print("  {s: >20} |\n", .{""});
+
+        if (sections.get(seg_id)) |headers| {
+            try writer.writeByte('\n');
+            for (headers.items) |header, header_id| {
+                try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.offset });
+                try writer.print("    {s: >20} |\n", .{""});
+                try writer.print("    {s: >20} -------- {x}\n", .{ "", header.offset + header.size });
+                if (header_id < headers.items.len - 1) {
+                    const next_header = headers.items[header_id + 1];
+                    if (next_header.offset < header.offset + header.size) {
+                        try writer.writeAll("      CURRENT SECTION OVERLAPS THE NEXT ONE\n");
+                    }
+                }
+            }
+            try writer.writeByte('\n');
+        } else {
+            try writer.print("  {s: >20} |\n", .{""});
+        }
+
+        try writer.print("  {s: >20} |\n", .{""});
+        try writer.print("  {s: >20} ---------- {x}\n", .{ "", seg.fileoff + seg.filesize });
+        if (i < sorted_by_offset.items.len - 1) {
+            const next_seg_id = sorted_by_offset.items[i + 1];
+            const next_seg = segments.items[next_seg_id];
+            if (next_seg.fileoff < seg.fileoff + seg.filesize) {
+                try writer.writeAll("    CURRENT SEGMENT OVERLAPS THE NEXT ONE\n");
+            }
+        }
+        try writer.writeByte('\n');
+    }
+}
+
+fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
+    const data = self.data[@sizeOf(macho.mach_header_64)..][0..self.header.sizeofcmds];
+    return .{
+        .ncmds = self.header.ncmds,
+        .buffer = data,
+    };
+}
+
+fn getDyldInfoOnlyLC(self: ZachO) ?macho.dyld_info_command {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .DYLD_INFO_ONLY => return lc.cast(macho.dyld_info_command).?,
+        else => continue,
+    } else return null;
+}
+
+fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            if (seg.vmaddr <= addr and addr < seg.vmaddr + seg.vmsize) {
+                return seg;
+            }
+        },
+        else => continue,
+    } else return null;
+}

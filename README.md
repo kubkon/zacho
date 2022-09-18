@@ -12,11 +12,24 @@ refuse to load your hand-crafter binary, or you just like looking at Mach-O diss
 
 ```
 zacho --help
-zacho [-hl] [--help] <FILE>
-	    --help         	   Display this help and exit.
-	-h, --header       	   Print the Mach-O header.
-	-l, --load-commands	   Print load commands.
-        -c, --code-signature   Print the contents of code signature (if any).
+zacho [-hldc] [--help] [--verify-memory-layout] <FILE>
+        --help
+            Display this help and exit.
+
+    -h, --header
+            Print the Mach-O header.
+
+    -l, --load-commands
+            Print load commands.
+
+    -d, --dyld-info
+            Print the contents of dyld rebase and bind opcodes.
+
+    -c, --code-signature
+            Print the contents of code signature (if any).
+
+        --verify-memory-layout
+            Print virtual memory layout and verify there is no overlap.
 ```
 
 Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
