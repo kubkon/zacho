@@ -1,9 +1,6 @@
-; [submodule "zig-clap"]
-; 	path = zig-clap
-; 	url = https://github.com/Hejsil/zig-clap.git
 [submodule "zig-clap"]
 	path = zig-clap
-	url = https://github.com/kubkon/zig-clap.git
+	url = https://github.com/Hejsil/zig-clap.git
 [submodule "ZigKit"]
 	path = ZigKit
 	url = https://github.com/kubkon/ZigKit.git
