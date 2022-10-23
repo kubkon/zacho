@@ -700,7 +700,7 @@ fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
     var pos: usize = 0;
 
     const oid1 = getOid(data, &pos);
-    const q1 = @minimum(@divFloor(oid1, 40), 2);
+    const q1 = @min(@divFloor(oid1, 40), 2);
     try writer.print("\n      {d}.{d}", .{ q1, oid1 - q1 * 40 });
 
     while (pos < data.len) {
