@@ -214,7 +214,7 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
     try writer.print(f.fmt("x"), .{ "Flags:", sect.flags });
 
     const flag_fmt = "        {s: <35}\n";
-    switch (sect.@"type"()) {
+    switch (sect.type()) {
         macho.S_REGULAR => try writer.print(flag_fmt, .{"S_REGULAR"}),
         macho.S_ZEROFILL => try writer.print(flag_fmt, .{"S_ZEROFILL"}),
         macho.S_CSTRING_LITERALS => try writer.print(flag_fmt, .{"S_CSTRING_LITERALS"}),
@@ -238,7 +238,7 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
         macho.S_INIT_FUNC_OFFSETS => try writer.print(flag_fmt, .{"S_INIT_FUNC_OFFSETS"}),
         else => {},
     }
-    const attrs = sect.@"attrs"();
+    const attrs = sect.attrs();
     if (attrs > 0) {
         if (attrs & macho.S_ATTR_DEBUG != 0) try writer.print(flag_fmt, .{"S_ATTR_DEBUG"});
         if (attrs & macho.S_ATTR_PURE_INSTRUCTIONS != 0) try writer.print(flag_fmt, .{"S_ATTR_PURE_INSTRUCTIONS"});
@@ -252,13 +252,13 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
         if (attrs & macho.S_ATTR_LOC_RELOC != 0) try writer.print(flag_fmt, .{"S_ATTR_LOC_RELOC"});
     }
 
-    if (sect.@"type"() == macho.S_SYMBOL_STUBS) {
+    if (sect.type() == macho.S_SYMBOL_STUBS) {
         try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
         try writer.print(f.fmt("x"), .{ "Size of stubs:", sect.reserved2 });
-    } else if (sect.@"type"() == macho.S_NON_LAZY_SYMBOL_POINTERS) {
+    } else if (sect.type() == macho.S_NON_LAZY_SYMBOL_POINTERS) {
         try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
         try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
-    } else if (sect.@"type"() == macho.S_LAZY_SYMBOL_POINTERS) {
+    } else if (sect.type() == macho.S_LAZY_SYMBOL_POINTERS) {
         try writer.print(f.fmt("x"), .{ "Indirect sym index:", sect.reserved1 });
         try writer.print(f.fmt("x"), .{ "Reserved 2:", sect.reserved2 });
     } else {
@@ -354,6 +354,32 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
+pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
+    const is_obj = self.header.filetype == macho.MH_OBJECT;
+
+    if (is_obj) {
+        const sect = self.getCompactUnwindInfoSectionHeader() orelse {
+            try writer.writeAll("No __LD,__compact_unwind section found.\n");
+            return;
+        };
+
+        const data = self.data[sect.offset..][0..sect.size];
+        if (data.len % @sizeOf(macho.compact_unwind_entry) != 0) {
+            try writer.print("Size of __LD,__compact_unwind section not integral of compact unwind info entry: {d} % {d} != 0", .{
+                data.len, @sizeOf(macho.compact_unwind_entry),
+            });
+            return error.MalformedCompactUnwindSection;
+        }
+
+        const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
+        const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
+
+        for (entries) |entry| {
+            try writer.print("  {any}\n", .{entry});
+        }
+    }
+}
+
 pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -405,7 +431,7 @@ fn formatCodeSignatureData(
         const offset = mem.readIntBig(u32, ptr[4..8]);
         try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ fmtCsSlotConst(tt), tt, offset });
         blobs.appendAssumeCapacity(.{
-            .@"type" = tt,
+            .type = tt,
             .offset = offset,
         });
         ptr = ptr[8..];
@@ -528,7 +554,7 @@ fn formatCodeSignatureData(
                         off,
                     });
                     req_blobs.appendAssumeCapacity(.{
-                        .@"type" = tt,
+                        .type = tt,
                         .offset = off,
                     });
                 }
@@ -1013,6 +1039,21 @@ fn getDyldInfoOnlyLC(self: ZachO) ?macho.dyld_info_command {
         .DYLD_INFO_ONLY => return lc.cast(macho.dyld_info_command).?,
         else => continue,
     } else return null;
+}
+
+fn getCompactUnwindInfoSectionHeader(self: ZachO) ?macho.section_64 {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const sections = lc.getSections();
+            for (sections) |sect| {
+                if (mem.eql(u8, "__LD", sect.segName()) and mem.eql(u8, "__compact_unwind", sect.sectName()))
+                    return sect;
+            }
+        },
+        else => {},
+    };
+    return null;
 }
 
 fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
