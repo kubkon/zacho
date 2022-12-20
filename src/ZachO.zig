@@ -16,8 +16,18 @@ gpa: Allocator,
 header: macho.mach_header_64,
 data: []align(@alignOf(u64)) const u8,
 
+symtab_lc: ?macho.symtab_command = null,
+symtab: []macho.nlist_64 = undefined,
+source_symtab_lookup: []u32 = undefined,
+
+dyld_info_only_lc: ?macho.dyld_info_command = null,
+
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
+    if (self.symtab_lc) |_| {
+        self.gpa.free(self.symtab);
+        self.gpa.free(self.source_symtab_lookup);
+    }
 }
 
 pub fn parse(gpa: Allocator, file: fs.File) !ZachO {
@@ -37,8 +47,97 @@ pub fn parse(gpa: Allocator, file: fs.File) !ZachO {
 
     self.header = header;
 
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SYMTAB => {
+            self.symtab_lc = lc.cast(macho.symtab_command).?;
+
+            const symtab = self.getSymbols();
+            self.symtab = try self.gpa.alloc(macho.nlist_64, symtab.len);
+            self.source_symtab_lookup = try self.gpa.alloc(u32, symtab.len);
+
+            var sorted_all_syms = try std.ArrayList(SymbolAtIndex).initCapacity(self.gpa, symtab.len);
+            defer sorted_all_syms.deinit();
+
+            for (symtab) |_, index| {
+                sorted_all_syms.appendAssumeCapacity(.{ .index = @intCast(u32, index) });
+            }
+
+            const ctx = SymbolAtIndex.Context{
+                .symtab = symtab,
+                .strtab = self.data[self.symtab_lc.?.stroff..][0..self.symtab_lc.?.strsize],
+            };
+
+            std.sort.sort(SymbolAtIndex, sorted_all_syms.items, ctx, SymbolAtIndex.lessThan);
+
+            for (sorted_all_syms.items) |sym_id, i| {
+                const sym = sym_id.getSymbol(ctx);
+                self.symtab[i] = sym;
+                self.source_symtab_lookup[i] = sym_id.index;
+            }
+        },
+        .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
+        else => {},
+    };
+
     return self;
 }
+
+const SymbolAtIndex = struct {
+    index: u32,
+
+    const Context = struct {
+        symtab: []align(1) const macho.nlist_64,
+        strtab: []const u8,
+    };
+
+    fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
+        return ctx.symtab[self.index];
+    }
+
+    fn getSymbolName(self: SymbolAtIndex, ctx: Context) []const u8 {
+        const off = self.getSymbol(ctx).n_strx;
+        return mem.sliceTo(@ptrCast([*:0]const u8, ctx.strtab.ptr + off), 0);
+    }
+
+    /// Performs lexicographic-like check.
+    /// * lhs and rhs defined
+    ///   * if lhs == rhs
+    ///     * if lhs.n_sect == rhs.n_sect
+    ///       * ext < weak < local < temp
+    ///     * lhs.n_sect < rhs.n_sect
+    ///   * lhs < rhs
+    /// * !rhs is undefined
+    fn lessThan(ctx: Context, lhs_index: SymbolAtIndex, rhs_index: SymbolAtIndex) bool {
+        const lhs = lhs_index.getSymbol(ctx);
+        const rhs = rhs_index.getSymbol(ctx);
+        if (lhs.sect() and rhs.sect()) {
+            if (lhs.n_value == rhs.n_value) {
+                if (lhs.n_sect == rhs.n_sect) {
+                    if (lhs.ext() and rhs.ext()) {
+                        if ((lhs.pext() or lhs.weakDef()) and (rhs.pext() or rhs.weakDef())) {
+                            return false;
+                        } else return rhs.pext() or rhs.weakDef();
+                    } else {
+                        const lhs_name = lhs_index.getSymbolName(ctx);
+                        const lhs_temp = mem.startsWith(u8, lhs_name, "l") or mem.startsWith(u8, lhs_name, "L");
+                        const rhs_name = rhs_index.getSymbolName(ctx);
+                        const rhs_temp = mem.startsWith(u8, rhs_name, "l") or mem.startsWith(u8, rhs_name, "L");
+                        if (lhs_temp and rhs_temp) {
+                            return false;
+                        } else return rhs_temp;
+                    }
+                } else return lhs.n_sect < rhs.n_sect;
+            } else return lhs.n_value < rhs.n_value;
+        } else if (lhs.undf() and rhs.undf()) {
+            return false;
+        } else return rhs.undf();
+    }
+
+    fn lessThanByNStrx(ctx: Context, lhs: SymbolAtIndex, rhs: SymbolAtIndex) bool {
+        return lhs.getSymbol(ctx).n_strx < rhs.getSymbol(ctx).n_strx;
+    }
+};
 
 pub fn printHeader(self: ZachO, writer: anytype) !void {
     const header = self.header;
@@ -269,7 +368,7 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
 }
 
 pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
-    const lc = self.getDyldInfoOnlyLC() orelse {
+    const lc = self.dyld_info_only_lc orelse {
         return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
     };
 
@@ -358,7 +457,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
     if (is_obj) {
-        const sect = self.getCompactUnwindInfoSectionHeader() orelse {
+        const sect = self.getSectionByName("__LD", "__compact_unwind") orelse {
             try writer.writeAll("No __LD,__compact_unwind section found.\n");
             return;
         };
@@ -374,8 +473,15 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
         const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
 
-        for (entries) |entry| {
-            try writer.print("  {any}\n", .{entry});
+        try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
+
+        for (entries) |entry, i| {
+            const sym = self.findSymbolByAddress(entry.rangeStart);
+            const name = self.getString(sym.n_strx);
+            try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
+            try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
+            try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
+            try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", entry.compactUnwindEncoding });
         }
     }
 }
@@ -1033,21 +1139,40 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     };
 }
 
-fn getDyldInfoOnlyLC(self: ZachO) ?macho.dyld_info_command {
-    var it = self.getLoadCommandsIterator();
-    while (it.next()) |lc| switch (lc.cmd()) {
-        .DYLD_INFO_ONLY => return lc.cast(macho.dyld_info_command).?,
-        else => continue,
-    } else return null;
+fn getSymbols(self: *const ZachO) []align(1) const macho.nlist_64 {
+    const lc = self.symtab_lc orelse return &[0]macho.nlist_64{};
+    const symtab = @ptrCast([*]align(1) const macho.nlist_64, self.data.ptr + lc.symoff)[0..lc.nsyms];
+    return symtab;
 }
 
-fn getCompactUnwindInfoSectionHeader(self: ZachO) ?macho.section_64 {
+fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
+    const symtab = self.getSymbols().?;
+    assert(index < symtab.len);
+    return symtab[index];
+}
+
+fn findSymbolByAddress(self: *const ZachO, addr: u64) macho.nlist_64 {
+    assert(self.symtab.len > 0);
+    for (self.symtab) |sym, i| {
+        if (sym.n_value > addr or sym.undf()) {
+            return self.symtab[i - 1];
+        }
+    } else unreachable;
+}
+
+fn getString(self: *const ZachO, off: u32) []const u8 {
+    const strtab = self.data[self.symtab_lc.?.stroff..][0..self.symtab_lc.?.strsize];
+    assert(off < strtab.len);
+    return mem.sliceTo(@ptrCast([*:0]const u8, strtab.ptr + off), 0);
+}
+
+fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?macho.section_64 {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
             const sections = lc.getSections();
             for (sections) |sect| {
-                if (mem.eql(u8, "__LD", sect.segName()) and mem.eql(u8, "__compact_unwind", sect.sectName()))
+                if (mem.eql(u8, segname, sect.segName()) and mem.eql(u8, sectname, sect.sectName()))
                     return sect;
             }
         },
