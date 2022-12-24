@@ -453,6 +453,75 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
+pub const unwind_arm64_encoding = union(enum) {
+    frame: frame,
+    frameless: frameless,
+    dwarf: dwarf,
+
+    pub const frame = packed struct {
+        x_reg_pairs: packed struct {
+            x19_x20: u1,
+            x21_x22: u1,
+            x23_x24: u1,
+            x25_x26: u1,
+            x27_x28: u1,
+        },
+        d_reg_pairs: packed struct {
+            d8_d9: u1,
+            d10_d11: u1,
+            d12_d13: u1,
+            d14_d15: u1,
+        },
+        unused: u15,
+        mode: UNWIND_ARM64_MODE = .FRAME,
+        personality_index: u2,
+        has_lda: u1,
+        start: u1,
+    };
+
+    pub const frameless = packed struct {
+        unused: u12 = 0,
+        stack_size: u12,
+        mode: UNWIND_ARM64_MODE = .FRAMELESS,
+        personality_index: u2,
+        has_lda: u1,
+        start: u1,
+    };
+
+    pub const dwarf = packed struct {
+        section_offset: u24,
+        mode: UNWIND_ARM64_MODE = .DWARF,
+        personality_index: u2,
+        has_lda: u1,
+        start: u1,
+    };
+
+    pub const UNWIND_ARM64_MODE = enum(u4) {
+        FRAMELESS = 0x2,
+        DWARF = 0x3,
+        FRAME = 0x4,
+        _,
+    };
+
+    pub const UNWIND_ARM64_MODE_MASK: u32 = 0x0F000000;
+
+    pub fn fromU32(enc: u32) !unwind_arm64_encoding {
+        const m = (enc & UNWIND_ARM64_MODE_MASK) >> 24;
+        return switch (@intToEnum(UNWIND_ARM64_MODE, m)) {
+            .FRAME => .{ .frame = @bitCast(frame, enc) },
+            .FRAMELESS => .{ .frameless = @bitCast(frameless, enc) },
+            .DWARF => .{ .dwarf = @bitCast(dwarf, enc) },
+            else => return error.UnknownEncoding,
+        };
+    }
+
+    pub fn mode(enc: unwind_arm64_encoding) UNWIND_ARM64_MODE {
+        return switch (enc) {
+            inline else => |x| x.mode,
+        };
+    }
+};
+
 pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
@@ -482,6 +551,9 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
             try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
             try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", entry.compactUnwindEncoding });
+
+            const enc = try unwind_arm64_encoding.fromU32(entry.compactUnwindEncoding);
+            try writer.print("    {s: <20} {s}\n", .{ "compact encoding", @tagName(enc.mode()) });
         }
     }
 }
