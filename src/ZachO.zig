@@ -582,6 +582,14 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 .prefix = 12,
             });
         }
+    } else {
+        const sect = self.getSectionByName("__TEXT", "__unwind_info") orelse {
+            try writer.writeAll("No __TEXT,__unwind_info section found.\n");
+            return;
+        };
+
+        const data = self.data[sect.offset..][0..sect.size];
+        std.log.warn("{x}", .{std.fmt.fmtSliceHexLower(data)});
     }
 }
 
@@ -596,7 +604,7 @@ fn formatCompactUnwindEncodingArm64(enc: unwind_arm64_encoding, writer: anytype,
 
     switch (enc) {
         .frameless => |frameless| {
-            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{ "stack size:", frameless.stack_size });
+            try writer.print(prefix ++ "{s: <12} {d}\n", .{ "stack size:", frameless.stack_size * 16 });
         },
         .frame => |frame| {
             inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).Struct.fields) |field| {
