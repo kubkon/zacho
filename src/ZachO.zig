@@ -578,11 +578,44 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
             try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
 
-            try writer.print("    {s: <8}{s: <12} {}\n", .{ " ", "start:", enc.start() });
-            try writer.print("    {s: <8}{s: <12} {}\n", .{ " ", "LSDA:", enc.hasLsda() });
-            try writer.print("    {s: <8}{s: <12} {d}\n", .{ " ", "personality:", enc.personalityIndex() });
-            try writer.print("    {s: <8}{s: <12} {s}\n", .{ " ", "mode:", @tagName(enc.mode()) });
+            try formatCompactUnwindEncodingArm64(enc, writer, .{
+                .prefix = 12,
+            });
         }
+    }
+}
+
+fn formatCompactUnwindEncodingArm64(enc: unwind_arm64_encoding, writer: anytype, comptime opts: struct {
+    prefix: usize = 0,
+}) !void {
+    const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
+    try writer.print(prefix ++ "{s: <12} {}\n", .{ "start:", enc.start() });
+    try writer.print(prefix ++ "{s: <12} {}\n", .{ "LSDA:", enc.hasLsda() });
+    try writer.print(prefix ++ "{s: <12} {d}\n", .{ "personality:", enc.personalityIndex() });
+    try writer.print(prefix ++ "{s: <12} {s}\n", .{ "mode:", @tagName(enc.mode()) });
+
+    switch (enc) {
+        .frameless => |frameless| {
+            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{ "stack size:", frameless.stack_size });
+        },
+        .frame => |frame| {
+            inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).Struct.fields) |field| {
+                try writer.print(prefix ++ "{s: <12} {}\n", .{
+                    field.name,
+                    @field(frame.x_reg_pairs, field.name) == 0b1,
+                });
+            }
+
+            inline for (@typeInfo(@TypeOf(frame.d_reg_pairs)).Struct.fields) |field| {
+                try writer.print(prefix ++ "{s: <12} {}\n", .{
+                    field.name,
+                    @field(frame.d_reg_pairs, field.name) == 0b1,
+                });
+            }
+        },
+        .dwarf => |dwarf| {
+            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{ "FDE offset:", dwarf.section_offset });
+        },
     }
 }
 
