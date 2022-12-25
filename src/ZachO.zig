@@ -475,7 +475,7 @@ pub const unwind_arm64_encoding = union(enum) {
         unused: u15,
         mode: UNWIND_ARM64_MODE = .FRAME,
         personality_index: u2,
-        has_lda: u1,
+        has_lsda: u1,
         start: u1,
     };
 
@@ -484,7 +484,7 @@ pub const unwind_arm64_encoding = union(enum) {
         stack_size: u12,
         mode: UNWIND_ARM64_MODE = .FRAMELESS,
         personality_index: u2,
-        has_lda: u1,
+        has_lsda: u1,
         start: u1,
     };
 
@@ -492,7 +492,7 @@ pub const unwind_arm64_encoding = union(enum) {
         section_offset: u24,
         mode: UNWIND_ARM64_MODE = .DWARF,
         personality_index: u2,
-        has_lda: u1,
+        has_lsda: u1,
         start: u1,
     };
 
@@ -512,6 +512,30 @@ pub const unwind_arm64_encoding = union(enum) {
             .FRAMELESS => .{ .frameless = @bitCast(frameless, enc) },
             .DWARF => .{ .dwarf = @bitCast(dwarf, enc) },
             else => return error.UnknownEncoding,
+        };
+    }
+
+    pub fn toU32(enc: unwind_arm64_encoding) u32 {
+        return switch (enc) {
+            inline else => |x| @bitCast(u32, x),
+        };
+    }
+
+    pub fn start(enc: unwind_arm64_encoding) bool {
+        return switch (enc) {
+            inline else => |x| x.start == 0b1,
+        };
+    }
+
+    pub fn hasLsda(enc: unwind_arm64_encoding) bool {
+        return switch (enc) {
+            inline else => |x| x.has_lsda == 0b1,
+        };
+    }
+
+    pub fn personalityIndex(enc: unwind_arm64_encoding) u2 {
+        return switch (enc) {
+            inline else => |x| x.personality_index,
         };
     }
 
@@ -547,13 +571,17 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (entries) |entry, i| {
             const sym = self.findSymbolByAddress(entry.rangeStart);
             const name = self.getString(sym.n_strx);
+            const enc = try unwind_arm64_encoding.fromU32(entry.compactUnwindEncoding);
+
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
             try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
             try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
-            try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", entry.compactUnwindEncoding });
+            try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
 
-            const enc = try unwind_arm64_encoding.fromU32(entry.compactUnwindEncoding);
-            try writer.print("    {s: <20} {s}\n", .{ "compact encoding", @tagName(enc.mode()) });
+            try writer.print("    {s: <8}{s: <12} {}\n", .{ " ", "start:", enc.start() });
+            try writer.print("    {s: <8}{s: <12} {}\n", .{ " ", "LSDA:", enc.hasLsda() });
+            try writer.print("    {s: <8}{s: <12} {d}\n", .{ " ", "personality:", enc.personalityIndex() });
+            try writer.print("    {s: <8}{s: <12} {s}\n", .{ " ", "mode:", @tagName(enc.mode()) });
         }
     }
 }
