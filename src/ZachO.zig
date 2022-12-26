@@ -453,12 +453,12 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
-pub const unwind_arm64_encoding = union(enum) {
-    frame: frame,
-    frameless: frameless,
-    dwarf: dwarf,
+pub const UnwindEncodingArm64 = union(enum) {
+    frame: Frame,
+    frameless: Frameless,
+    dwarf: Dwarf,
 
-    pub const frame = packed struct {
+    pub const Frame = packed struct {
         x_reg_pairs: packed struct {
             x19_x20: u1,
             x21_x22: u1,
@@ -473,73 +473,73 @@ pub const unwind_arm64_encoding = union(enum) {
             d14_d15: u1,
         },
         unused: u15,
-        mode: UNWIND_ARM64_MODE = .FRAME,
+        mode: Mode = .frame,
         personality_index: u2,
         has_lsda: u1,
         start: u1,
     };
 
-    pub const frameless = packed struct {
+    pub const Frameless = packed struct {
         unused: u12 = 0,
         stack_size: u12,
-        mode: UNWIND_ARM64_MODE = .FRAMELESS,
+        mode: Mode = .frameless,
         personality_index: u2,
         has_lsda: u1,
         start: u1,
     };
 
-    pub const dwarf = packed struct {
+    pub const Dwarf = packed struct {
         section_offset: u24,
-        mode: UNWIND_ARM64_MODE = .DWARF,
+        mode: Mode = .dwarf,
         personality_index: u2,
         has_lsda: u1,
         start: u1,
     };
 
-    pub const UNWIND_ARM64_MODE = enum(u4) {
-        FRAMELESS = 0x2,
-        DWARF = 0x3,
-        FRAME = 0x4,
+    pub const Mode = enum(u4) {
+        frameless = 0x2,
+        dwarf = 0x3,
+        frame = 0x4,
         _,
     };
 
-    pub const UNWIND_ARM64_MODE_MASK: u32 = 0x0F000000;
+    pub const mode_mask: u32 = 0x0F000000;
 
-    pub fn fromU32(enc: u32) !unwind_arm64_encoding {
-        const m = (enc & UNWIND_ARM64_MODE_MASK) >> 24;
-        return switch (@intToEnum(UNWIND_ARM64_MODE, m)) {
-            .FRAME => .{ .frame = @bitCast(frame, enc) },
-            .FRAMELESS => .{ .frameless = @bitCast(frameless, enc) },
-            .DWARF => .{ .dwarf = @bitCast(dwarf, enc) },
+    pub fn fromU32(enc: u32) !UnwindEncodingArm64 {
+        const m = (enc & mode_mask) >> 24;
+        return switch (@intToEnum(Mode, m)) {
+            .frame => .{ .frame = @bitCast(Frame, enc) },
+            .frameless => .{ .frameless = @bitCast(Frameless, enc) },
+            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
             else => return error.UnknownEncoding,
         };
     }
 
-    pub fn toU32(enc: unwind_arm64_encoding) u32 {
+    pub fn toU32(enc: UnwindEncodingArm64) u32 {
         return switch (enc) {
             inline else => |x| @bitCast(u32, x),
         };
     }
 
-    pub fn start(enc: unwind_arm64_encoding) bool {
+    pub fn start(enc: UnwindEncodingArm64) bool {
         return switch (enc) {
             inline else => |x| x.start == 0b1,
         };
     }
 
-    pub fn hasLsda(enc: unwind_arm64_encoding) bool {
+    pub fn hasLsda(enc: UnwindEncodingArm64) bool {
         return switch (enc) {
             inline else => |x| x.has_lsda == 0b1,
         };
     }
 
-    pub fn personalityIndex(enc: unwind_arm64_encoding) u2 {
+    pub fn personalityIndex(enc: UnwindEncodingArm64) u2 {
         return switch (enc) {
             inline else => |x| x.personality_index,
         };
     }
 
-    pub fn mode(enc: unwind_arm64_encoding) UNWIND_ARM64_MODE {
+    pub fn mode(enc: UnwindEncodingArm64) Mode {
         return switch (enc) {
             inline else => |x| x.mode,
         };
@@ -571,7 +571,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (entries) |entry, i| {
             const sym = self.findSymbolByAddress(entry.rangeStart);
             const name = self.getString(sym.n_strx);
-            const enc = try unwind_arm64_encoding.fromU32(entry.compactUnwindEncoding);
+            const enc = try UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
             try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
@@ -628,7 +628,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             try writer.writeAll("\n  Compact unwind encodings:\n");
 
             for (compact_unwind_encodings) |raw, i| {
-                const enc = try unwind_arm64_encoding.fromU32(raw);
+                const enc = try UnwindEncodingArm64.fromU32(raw);
                 try writer.print("    Entry {d}\n", .{i});
                 try formatCompactUnwindEncodingArm64(enc, writer, .{
                     .prefix = 6,
@@ -691,7 +691,10 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 indexes[0].lsdaIndexArraySectionOffset,
             @sizeOf(macho.unwind_info_section_header_lsda_index_entry),
         );
-        const lsdas = @ptrCast([*]align(1) const macho.unwind_info_section_header_lsda_index_entry, data.ptr + indexes[0].lsdaIndexArraySectionOffset)[0..num_lsdas];
+        const lsdas = @ptrCast(
+            [*]align(1) const macho.unwind_info_section_header_lsda_index_entry,
+            data.ptr + indexes[0].lsdaIndexArraySectionOffset,
+        )[0..num_lsdas];
 
         try writer.writeAll("\n  LSDAs:\n");
         for (lsdas) |lsda, i| {
@@ -715,7 +718,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
     }
 }
 
-fn formatCompactUnwindEncodingArm64(enc: unwind_arm64_encoding, writer: anytype, comptime opts: struct {
+fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, comptime opts: struct {
     prefix: usize = 0,
 }) !void {
     const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
@@ -726,7 +729,10 @@ fn formatCompactUnwindEncodingArm64(enc: unwind_arm64_encoding, writer: anytype,
 
     switch (enc) {
         .frameless => |frameless| {
-            try writer.print(prefix ++ "{s: <12} {d}\n", .{ "stack size:", frameless.stack_size * 16 });
+            try writer.print(prefix ++ "{s: <12} {d}\n", .{
+                "stack size:",
+                frameless.stack_size * 16,
+            });
         },
         .frame => |frame| {
             inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).Struct.fields) |field| {
@@ -744,7 +750,10 @@ fn formatCompactUnwindEncodingArm64(enc: unwind_arm64_encoding, writer: anytype,
             }
         },
         .dwarf => |dwarf| {
-            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{ "FDE offset:", dwarf.section_offset });
+            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{
+                "FDE offset:",
+                dwarf.section_offset,
+            });
         },
     }
 }
