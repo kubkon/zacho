@@ -643,9 +643,23 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
         if (personalities.len > 0) {
             try writer.writeAll("\n  Personalities:\n");
+            const seg = self.getSegmentByName("__TEXT").?;
 
             for (personalities) |personality, i| {
-                try writer.print("    {d}: 0x{x}", .{ i, personality });
+                const addr = seg.vmaddr + personality;
+                const target_sect = self.getSectionByAddress(addr).?;
+
+                const ptr = if (target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS)
+                    self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8))
+                else
+                    @ptrCast(
+                        *align(1) const u64,
+                        self.data[addr - target_sect.addr + target_sect.offset ..],
+                    ).*;
+
+                const sym = self.findSymbolByAddress(ptr);
+                const name = self.getString(sym.n_strx);
+                try writer.print("    {d}: 0x{x} -> 0x{x} {s}", .{ i + 1, addr, ptr, name });
             }
         }
 
@@ -1411,6 +1425,53 @@ fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?mac
     return null;
 }
 
+fn getSectionByAddress(self: ZachO, addr: u64) ?macho.section_64 {
+    var it = self.getLoadCommandsIterator();
+    const lc = while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            if (seg.vmaddr <= addr and addr < seg.vmaddr + seg.vmsize) {
+                break lc;
+            }
+        },
+        else => continue,
+    } else return null;
+    const sect = for (lc.getSections()) |sect| {
+        if (sect.addr <= addr and addr < sect.addr + sect.size) {
+            break sect;
+        }
+    } else return null;
+    return sect;
+}
+
+fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
+    const sect = self.getSectionByName("__DATA_CONST", "__got").?;
+    const data = self.data[sect.offset..][0..sect.size];
+    const ptr = @ptrCast(*align(1) const u64, data[index * 8 ..]).*;
+
+    const mask = 0xFFFF000000000000; // TODO I guessed the value of the mask, so verify!
+    if (mask & ptr == 0) {
+        // Old-style GOT with actual pointer values
+        return ptr;
+    }
+
+    const actual_ptr = synthesiseGotPointerValue(data, index);
+    const seg = self.getSegmentByName("__TEXT").?;
+    return seg.vmaddr + actual_ptr;
+}
+
+fn synthesiseGotPointerValue(data: []const u8, index: usize) u64 {
+    const enc_mask = 0xFFFF000000000000; // TODO I guessed the value of the mask, so verify!
+    const value_mask = 0xFFFFFFFFFFFF;
+    const ptr = @ptrCast(*align(1) const u64, data[index * 8 ..]).*;
+
+    switch ((enc_mask & ptr) >> 48) {
+        0x0010 => return value_mask & ptr, // Start offset value
+        0x8010 => return (value_mask & ptr) + synthesiseGotPointerValue(data, index - 1),
+        else => unreachable,
+    }
+}
+
 fn getSegmentByName(self: ZachO, segname: []const u8) ?macho.segment_command_64 {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -1435,4 +1496,25 @@ fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
         },
         else => continue,
     } else return null;
+}
+
+fn sliceContentsByAddress(self: ZachO, addr: u64, size: u64) ?[]const u8 {
+    var it = self.getLoadCommandsIterator();
+    const lc = while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            if (seg.vmaddr <= addr and addr < seg.vmaddr + seg.vmsize) {
+                break lc;
+            }
+        },
+        else => continue,
+    } else return null;
+    const sect = for (lc.getSections()) |sect| {
+        if (sect.addr <= addr and addr < sect.addr + sect.size) {
+            break sect;
+        }
+    } else return null;
+    const offset = addr - sect.addr + sect.offset;
+    assert(offset + size < sect.offset + sect.size);
+    return self.data[offset..][0..size];
 }
