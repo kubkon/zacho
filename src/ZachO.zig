@@ -589,7 +589,90 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         };
 
         const data = self.data[sect.offset..][0..sect.size];
-        std.log.warn("{x}", .{std.fmt.fmtSliceHexLower(data)});
+        const header = @ptrCast(*align(1) const macho.unwind_info_section_header, data.ptr).*;
+
+        try writer.writeAll("Contents of __TEXT,__unwind_info section:\n");
+        try writer.writeAll("  Header:\n");
+        try writer.print("    {s: <25} {d}\n", .{ "Version:", header.version });
+        try writer.print("    {s: <25} 0x{x}\n", .{
+            "Common encodings offset:",
+            header.commonEncodingsArraySectionOffset,
+        });
+        try writer.print("    {s: <25} {d}\n", .{
+            "Common encodings count:",
+            header.commonEncodingsArrayCount,
+        });
+        try writer.print("    {s: <25} 0x{x}\n", .{
+            "Personalities offset:",
+            header.personalityArraySectionOffset,
+        });
+        try writer.print("    {s: <25} {d}\n", .{
+            "Personalities count:",
+            header.personalityArrayCount,
+        });
+        try writer.print("    {s: <25} 0x{x}\n", .{
+            "Indexes offset:",
+            header.indexSectionOffset,
+        });
+        try writer.print("    {s: <25} {d}\n", .{
+            "Indexes count:",
+            header.indexCount,
+        });
+
+        const compact_unwind_encodings = @ptrCast(
+            [*]align(1) const macho.compact_unwind_encoding_t,
+            data.ptr + header.commonEncodingsArraySectionOffset,
+        )[0..header.commonEncodingsArrayCount];
+
+        if (compact_unwind_encodings.len > 0) {
+            try writer.writeAll("\n  Compact unwind encodings:\n");
+
+            for (compact_unwind_encodings) |raw, i| {
+                const enc = try unwind_arm64_encoding.fromU32(raw);
+                try writer.print("    Entry {d}\n", .{i});
+                try formatCompactUnwindEncodingArm64(enc, writer, .{
+                    .prefix = 6,
+                });
+            }
+        }
+
+        const personalities = @ptrCast(
+            [*]align(1) const u32,
+            data.ptr + header.personalityArraySectionOffset,
+        )[0..header.personalityArrayCount];
+
+        if (personalities.len > 0) {
+            try writer.writeAll("\n  Personalities:\n");
+
+            for (personalities) |personality, i| {
+                try writer.print("    {d}: 0x{x}", .{ i, personality });
+            }
+        }
+
+        const indexes = @ptrCast(
+            [*]align(1) const macho.unwind_info_section_header_index_entry,
+            data.ptr + header.indexSectionOffset,
+        )[0..header.indexCount];
+
+        if (indexes.len > 0) {
+            try writer.writeAll("\n  Indexes:\n");
+
+            for (indexes) |entry, i| {
+                try writer.print("    Entry {d}\n", .{i});
+                try writer.print("      {s: <20} 0x{x}\n", .{
+                    "function:",
+                    entry.functionOffset,
+                });
+                try writer.print("      {s: <20} 0x{x}\n", .{
+                    "second level pages:",
+                    entry.secondLevelPagesSectionOffset,
+                });
+                try writer.print("      {s: <20} 0x{x}\n", .{
+                    "LSDA index array:",
+                    entry.lsdaIndexArraySectionOffset,
+                });
+            }
+        }
     }
 }
 
