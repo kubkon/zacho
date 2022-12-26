@@ -695,14 +695,21 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
         try writer.writeAll("\n  LSDAs:\n");
         for (lsdas) |lsda, i| {
+            const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset);
+            const func_name = self.getString(func_sym.n_strx);
+            const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
+            const lsda_name = self.getString(lsda_sym.n_strx);
+
             try writer.print("    LSDA {d}\n", .{i});
-            try writer.print("      {s: <20} 0x{x}\n", .{
+            try writer.print("      {s: <20} 0x{x} {s}\n", .{
                 "Function offset:",
                 lsda.functionOffset,
+                func_name,
             });
-            try writer.print("      {s: <20} 0x{x}\n", .{
+            try writer.print("      {s: <20} 0x{x} {s}\n", .{
                 "LSDA offset:",
                 lsda.lsdaOffset,
+                lsda_name,
             });
         }
     }
