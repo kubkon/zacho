@@ -658,10 +658,15 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             try writer.writeAll("\n  Indexes:\n");
 
             for (indexes) |entry, i| {
+                const seg = self.getSegmentByName("__TEXT").?;
+                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const name = self.getString(sym.n_strx);
+
                 try writer.print("    Entry {d}\n", .{i});
-                try writer.print("      {s: <20} 0x{x}\n", .{
+                try writer.print("      {s: <20} 0x{x} {s}\n", .{
                     "function:",
                     entry.functionOffset,
+                    name,
                 });
                 try writer.print("      {s: <20} 0x{x}\n", .{
                     "second level pages:",
@@ -1378,10 +1383,11 @@ fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
 fn findSymbolByAddress(self: *const ZachO, addr: u64) macho.nlist_64 {
     assert(self.symtab.len > 0);
     for (self.symtab) |sym, i| {
+        if (sym.stab()) continue;
         if (sym.n_value > addr or sym.undf()) {
             return self.symtab[i - 1];
         }
-    } else unreachable;
+    } else return self.symtab[self.symtab.len - 1];
 }
 
 fn getString(self: *const ZachO, off: u32) []const u8 {
@@ -1403,6 +1409,19 @@ fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?mac
         else => {},
     };
     return null;
+}
+
+fn getSegmentByName(self: ZachO, segname: []const u8) ?macho.segment_command_64 {
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const seg = lc.cast(macho.segment_command_64).?;
+            if (mem.eql(u8, segname, seg.segName())) {
+                return seg;
+            }
+        },
+        else => continue,
+    } else return null;
 }
 
 fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
