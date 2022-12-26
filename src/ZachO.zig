@@ -648,15 +648,8 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             for (personalities) |personality, i| {
                 const addr = seg.vmaddr + personality;
                 const target_sect = self.getSectionByAddress(addr).?;
-
-                const ptr = if (target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS)
-                    self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8))
-                else
-                    @ptrCast(
-                        *align(1) const u64,
-                        self.data[addr - target_sect.addr + target_sect.offset ..],
-                    ).*;
-
+                assert(target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS);
+                const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
                 const sym = self.findSymbolByAddress(ptr);
                 const name = self.getString(sym.n_strx);
                 try writer.print("    {d}: 0x{x} -> 0x{x} {s}", .{ i + 1, addr, ptr, name });
@@ -668,29 +661,49 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             data.ptr + header.indexSectionOffset,
         )[0..header.indexCount];
 
-        if (indexes.len > 0) {
-            try writer.writeAll("\n  Indexes:\n");
+        if (indexes.len == 0) return;
 
-            for (indexes) |entry, i| {
-                const seg = self.getSegmentByName("__TEXT").?;
-                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
-                const name = self.getString(sym.n_strx);
+        const seg = self.getSegmentByName("__TEXT").?;
 
-                try writer.print("    Entry {d}\n", .{i});
-                try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                    "function:",
-                    entry.functionOffset,
-                    name,
-                });
-                try writer.print("      {s: <20} 0x{x}\n", .{
-                    "second level pages:",
-                    entry.secondLevelPagesSectionOffset,
-                });
-                try writer.print("      {s: <20} 0x{x}\n", .{
-                    "LSDA index array:",
-                    entry.lsdaIndexArraySectionOffset,
-                });
-            }
+        try writer.writeAll("\n  Indexes:\n");
+        for (indexes) |entry, i| {
+            const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+            const name = self.getString(sym.n_strx);
+
+            try writer.print("    Entry {d}\n", .{i});
+            try writer.print("      {s: <20} 0x{x} {s}\n", .{
+                "function:",
+                entry.functionOffset,
+                name,
+            });
+            try writer.print("      {s: <20} 0x{x}\n", .{
+                "second level pages:",
+                entry.secondLevelPagesSectionOffset,
+            });
+            try writer.print("      {s: <20} 0x{x}\n", .{
+                "LSDA index array:",
+                entry.lsdaIndexArraySectionOffset,
+            });
+        }
+
+        const num_lsdas = @divExact(
+            indexes[indexes.len - 1].lsdaIndexArraySectionOffset -
+                indexes[0].lsdaIndexArraySectionOffset,
+            @sizeOf(macho.unwind_info_section_header_lsda_index_entry),
+        );
+        const lsdas = @ptrCast([*]align(1) const macho.unwind_info_section_header_lsda_index_entry, data.ptr + indexes[0].lsdaIndexArraySectionOffset)[0..num_lsdas];
+
+        try writer.writeAll("\n  LSDAs:\n");
+        for (lsdas) |lsda, i| {
+            try writer.print("    LSDA {d}\n", .{i});
+            try writer.print("      {s: <20} 0x{x}\n", .{
+                "Function offset:",
+                lsda.functionOffset,
+            });
+            try writer.print("      {s: <20} 0x{x}\n", .{
+                "LSDA offset:",
+                lsda.lsdaOffset,
+            });
         }
     }
 }
