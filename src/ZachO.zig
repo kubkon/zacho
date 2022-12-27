@@ -22,6 +22,8 @@ source_symtab_lookup: []u32 = undefined,
 
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 
+verbose: bool,
+
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
     if (self.symtab_lc) |_| {
@@ -30,13 +32,14 @@ pub fn deinit(self: *ZachO) void {
     }
 }
 
-pub fn parse(gpa: Allocator, file: fs.File) !ZachO {
+pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
     const file_size = try file.getEndPos();
     const data = try file.readToEndAllocOptions(gpa, file_size, file_size, @alignOf(u64), null);
     var self = ZachO{
         .gpa = gpa,
         .header = undefined,
         .data = data,
+        .verbose = verbose,
     };
 
     var stream = std.io.fixedBufferStream(self.data);
@@ -499,29 +502,28 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         const header = @ptrCast(*align(1) const macho.unwind_info_section_header, data.ptr).*;
 
         try writer.writeAll("Contents of __TEXT,__unwind_info section:\n");
-        try writer.writeAll("  Header:\n");
-        try writer.print("    {s: <25} {d}\n", .{ "Version:", header.version });
-        try writer.print("    {s: <25} 0x{x}\n", .{
+        try writer.print("  {s: <25} {d}\n", .{ "Version:", header.version });
+        try writer.print("  {s: <25} 0x{x}\n", .{
             "Common encodings offset:",
             header.commonEncodingsArraySectionOffset,
         });
-        try writer.print("    {s: <25} {d}\n", .{
+        try writer.print("  {s: <25} {d}\n", .{
             "Common encodings count:",
             header.commonEncodingsArrayCount,
         });
-        try writer.print("    {s: <25} 0x{x}\n", .{
+        try writer.print("  {s: <25} 0x{x}\n", .{
             "Personalities offset:",
             header.personalityArraySectionOffset,
         });
-        try writer.print("    {s: <25} {d}\n", .{
+        try writer.print("  {s: <25} {d}\n", .{
             "Personalities count:",
             header.personalityArrayCount,
         });
-        try writer.print("    {s: <25} 0x{x}\n", .{
+        try writer.print("  {s: <25} 0x{x}\n", .{
             "Indexes offset:",
             header.indexSectionOffset,
         });
-        try writer.print("    {s: <25} {d}\n", .{
+        try writer.print("  {s: <25} {d}\n", .{
             "Indexes count:",
             header.indexCount,
         });
@@ -531,15 +533,17 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             data.ptr + header.commonEncodingsArraySectionOffset,
         )[0..header.commonEncodingsArrayCount];
 
-        if (compact_unwind_encodings.len > 0) {
-            try writer.writeAll("\n  Compact unwind encodings:\n");
+        try writer.print("\n  Compact encodings: (count = {d})\n", .{compact_unwind_encodings.len});
 
-            for (compact_unwind_encodings) |raw, i| {
+        for (compact_unwind_encodings) |raw, i| {
+            if (self.verbose) {
                 const enc = try macho.UnwindEncodingArm64.fromU32(raw);
-                try writer.print("    Entry {d}\n", .{i});
+                try writer.print("    [{d}]\n", .{i});
                 try formatCompactUnwindEncodingArm64(enc, writer, .{
                     .prefix = 6,
                 });
+            } else {
+                try writer.print("    encoding[{d}]: 0x{x:0>8}\n", .{ i, raw });
             }
         }
 
@@ -548,18 +552,20 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             data.ptr + header.personalityArraySectionOffset,
         )[0..header.personalityArrayCount];
 
-        if (personalities.len > 0) {
-            try writer.writeAll("\n  Personalities:\n");
-            const seg = self.getSegmentByName("__TEXT").?;
+        try writer.print("\n  Personality functions: (count = {d})\n", .{personalities.len});
 
-            for (personalities) |personality, i| {
+        for (personalities) |personality, i| {
+            if (self.verbose) {
+                const seg = self.getSegmentByName("__TEXT").?;
                 const addr = seg.vmaddr + personality;
                 const target_sect = self.getSectionByAddress(addr).?;
                 assert(target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS);
                 const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
                 const sym = self.findSymbolByAddress(ptr);
                 const name = self.getString(sym.n_strx);
-                try writer.print("    {d}: 0x{x} -> 0x{x} {s}", .{ i + 1, addr, ptr, name });
+                try writer.print("    {d}: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
+            } else {
+                try writer.print("    personality[{d}]: 0x{x:0>8}\n", .{ i + 1, personality });
             }
         }
 
@@ -568,30 +574,38 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             data.ptr + header.indexSectionOffset,
         )[0..header.indexCount];
 
-        if (indexes.len == 0) return;
-
-        const seg = self.getSegmentByName("__TEXT").?;
-
-        try writer.writeAll("\n  Indexes:\n");
+        try writer.print("\n  Top level indices: (count = {d})\n", .{indexes.len});
         for (indexes) |entry, i| {
-            const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
-            const name = self.getString(sym.n_strx);
+            if (self.verbose) {
+                const seg = self.getSegmentByName("__TEXT").?;
+                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const name = self.getString(sym.n_strx);
 
-            try writer.print("    Entry {d}\n", .{i});
-            try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                "function:",
-                entry.functionOffset,
-                name,
-            });
-            try writer.print("      {s: <20} 0x{x}\n", .{
-                "second level pages:",
-                entry.secondLevelPagesSectionOffset,
-            });
-            try writer.print("      {s: <20} 0x{x}\n", .{
-                "LSDA index array:",
-                entry.lsdaIndexArraySectionOffset,
-            });
+                try writer.print("    [{d}]\n", .{i});
+                try writer.print("      {s: <20} 0x{x} {s}\n", .{
+                    "function:",
+                    entry.functionOffset,
+                    name,
+                });
+                try writer.print("      {s: <20} 0x{x}\n", .{
+                    "second level pages:",
+                    entry.secondLevelPagesSectionOffset,
+                });
+                try writer.print("      {s: <20} 0x{x}\n", .{
+                    "LSDA index array:",
+                    entry.lsdaIndexArraySectionOffset,
+                });
+            } else {
+                try writer.print("    [{d}]: function offset=0x{x:0>8}, 2nd level page offset=0x{x:0>8}, LSDA offset=0x{x:0>8}\n", .{
+                    i,
+                    entry.functionOffset,
+                    entry.secondLevelPagesSectionOffset,
+                    entry.lsdaIndexArraySectionOffset,
+                });
+            }
         }
+
+        if (indexes.len == 0) return;
 
         const num_lsdas = @divExact(
             indexes[indexes.len - 1].lsdaIndexArraySectionOffset -
@@ -603,27 +617,37 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             data.ptr + indexes[0].lsdaIndexArraySectionOffset,
         )[0..num_lsdas];
 
-        try writer.writeAll("\n  LSDAs:\n");
+        try writer.writeAll("\n  LSDA descriptors:\n");
         for (lsdas) |lsda, i| {
-            const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset);
-            const func_name = self.getString(func_sym.n_strx);
-            const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
-            const lsda_name = self.getString(lsda_sym.n_strx);
+            if (self.verbose) {
+                const seg = self.getSegmentByName("__TEXT").?;
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset);
+                const func_name = self.getString(func_sym.n_strx);
+                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
+                const lsda_name = self.getString(lsda_sym.n_strx);
 
-            try writer.print("    LSDA {d}\n", .{i});
-            try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                "Function offset:",
-                lsda.functionOffset,
-                func_name,
-            });
-            try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                "LSDA offset:",
-                lsda.lsdaOffset,
-                lsda_name,
-            });
+                try writer.print("    [{d}]\n", .{i});
+                try writer.print("      {s: <20} 0x{x} {s}\n", .{
+                    "Function offset:",
+                    lsda.functionOffset,
+                    func_name,
+                });
+                try writer.print("      {s: <20} 0x{x} {s}\n", .{
+                    "LSDA offset:",
+                    lsda.lsdaOffset,
+                    lsda_name,
+                });
+            } else {
+                try writer.print("    [{d}]: function offset=0x{x:0>8}, LSDA offset=0x{x:0>8}\n", .{
+                    i,
+                    lsda.functionOffset,
+                    lsda.lsdaOffset,
+                });
+            }
         }
 
         for (indexes) |entry, i| {
+            _ = i;
             const start_offset = entry.secondLevelPagesSectionOffset;
             if (start_offset == 0) break;
 
@@ -631,7 +655,12 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 macho.UNWIND_SECOND_LEVEL,
                 @ptrCast(*align(1) const u32, data.ptr + start_offset).*,
             );
-            std.log.warn("{d}: kind = {s}", .{ i, @tagName(kind) });
+
+            switch (kind) {
+                .REGULAR => {},
+                .COMPRESSED => {},
+                else => return error.UnhandledSecondLevelKind,
+            }
         }
     }
 }
