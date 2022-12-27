@@ -453,99 +453,6 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
-pub const UnwindEncodingArm64 = union(enum) {
-    frame: Frame,
-    frameless: Frameless,
-    dwarf: Dwarf,
-
-    pub const Frame = packed struct {
-        x_reg_pairs: packed struct {
-            x19_x20: u1,
-            x21_x22: u1,
-            x23_x24: u1,
-            x25_x26: u1,
-            x27_x28: u1,
-        },
-        d_reg_pairs: packed struct {
-            d8_d9: u1,
-            d10_d11: u1,
-            d12_d13: u1,
-            d14_d15: u1,
-        },
-        unused: u15,
-        mode: Mode = .frame,
-        personality_index: u2,
-        has_lsda: u1,
-        start: u1,
-    };
-
-    pub const Frameless = packed struct {
-        unused: u12 = 0,
-        stack_size: u12,
-        mode: Mode = .frameless,
-        personality_index: u2,
-        has_lsda: u1,
-        start: u1,
-    };
-
-    pub const Dwarf = packed struct {
-        section_offset: u24,
-        mode: Mode = .dwarf,
-        personality_index: u2,
-        has_lsda: u1,
-        start: u1,
-    };
-
-    pub const Mode = enum(u4) {
-        frameless = 0x2,
-        dwarf = 0x3,
-        frame = 0x4,
-        _,
-    };
-
-    pub const mode_mask: u32 = 0x0F000000;
-
-    pub fn fromU32(enc: u32) !UnwindEncodingArm64 {
-        const m = (enc & mode_mask) >> 24;
-        return switch (@intToEnum(Mode, m)) {
-            .frame => .{ .frame = @bitCast(Frame, enc) },
-            .frameless => .{ .frameless = @bitCast(Frameless, enc) },
-            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
-            else => return error.UnknownEncoding,
-        };
-    }
-
-    pub fn toU32(enc: UnwindEncodingArm64) u32 {
-        return switch (enc) {
-            inline else => |x| @bitCast(u32, x),
-        };
-    }
-
-    pub fn start(enc: UnwindEncodingArm64) bool {
-        return switch (enc) {
-            inline else => |x| x.start == 0b1,
-        };
-    }
-
-    pub fn hasLsda(enc: UnwindEncodingArm64) bool {
-        return switch (enc) {
-            inline else => |x| x.has_lsda == 0b1,
-        };
-    }
-
-    pub fn personalityIndex(enc: UnwindEncodingArm64) u2 {
-        return switch (enc) {
-            inline else => |x| x.personality_index,
-        };
-    }
-
-    pub fn mode(enc: UnwindEncodingArm64) Mode {
-        return switch (enc) {
-            inline else => |x| x.mode,
-        };
-    }
-};
-
 pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
@@ -571,7 +478,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (entries) |entry, i| {
             const sym = self.findSymbolByAddress(entry.rangeStart);
             const name = self.getString(sym.n_strx);
-            const enc = try UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
+            const enc = try macho.UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
             try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
@@ -628,7 +535,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             try writer.writeAll("\n  Compact unwind encodings:\n");
 
             for (compact_unwind_encodings) |raw, i| {
-                const enc = try UnwindEncodingArm64.fromU32(raw);
+                const enc = try macho.UnwindEncodingArm64.fromU32(raw);
                 try writer.print("    Entry {d}\n", .{i});
                 try formatCompactUnwindEncodingArm64(enc, writer, .{
                     .prefix = 6,
@@ -715,10 +622,21 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 lsda_name,
             });
         }
+
+        for (indexes) |entry, i| {
+            const start_offset = entry.secondLevelPagesSectionOffset;
+            if (start_offset == 0) break;
+
+            const kind = @intToEnum(
+                macho.UNWIND_SECOND_LEVEL,
+                @ptrCast(*align(1) const u32, data.ptr + start_offset).*,
+            );
+            std.log.warn("{d}: kind = {s}", .{ i, @tagName(kind) });
+        }
     }
 }
 
-fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, comptime opts: struct {
+fn formatCompactUnwindEncodingArm64(enc: macho.UnwindEncodingArm64, writer: anytype, comptime opts: struct {
     prefix: usize = 0,
 }) !void {
     const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
