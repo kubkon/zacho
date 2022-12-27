@@ -528,14 +528,14 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             header.indexCount,
         });
 
-        const compact_unwind_encodings = @ptrCast(
+        const common_encodings = @ptrCast(
             [*]align(1) const macho.compact_unwind_encoding_t,
             data.ptr + header.commonEncodingsArraySectionOffset,
         )[0..header.commonEncodingsArrayCount];
 
-        try writer.print("\n  Compact encodings: (count = {d})\n", .{compact_unwind_encodings.len});
+        try writer.print("\n  Common encodings: (count = {d})\n", .{common_encodings.len});
 
-        for (compact_unwind_encodings) |raw, i| {
+        for (common_encodings) |raw, i| {
             if (self.verbose) {
                 const enc = try macho.UnwindEncodingArm64.fromU32(raw);
                 try writer.print("    [{d}]\n", .{i});
@@ -646,10 +646,16 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             }
         }
 
+        try writer.writeAll("\n  Second level indices:\n");
         for (indexes) |entry, i| {
-            _ = i;
             const start_offset = entry.secondLevelPagesSectionOffset;
             if (start_offset == 0) break;
+
+            try writer.print("    Second level index[{d}]: offset in section=0x{x:0>8}, base function offset=0x{x:0>8}\n", .{
+                i,
+                entry.secondLevelPagesSectionOffset,
+                entry.functionOffset,
+            });
 
             const kind = @intToEnum(
                 macho.UNWIND_SECOND_LEVEL,
@@ -657,8 +663,60 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             );
 
             switch (kind) {
-                .REGULAR => {},
-                .COMPRESSED => {},
+                .REGULAR => {
+                    const page_header = @ptrCast(
+                        *align(1) const macho.unwind_info_regular_second_level_page_header,
+                        data.ptr + start_offset,
+                    ).*;
+                    std.log.warn("{}", .{page_header});
+                },
+                .COMPRESSED => {
+                    const page_header = @ptrCast(
+                        *align(1) const macho.unwind_info_compressed_second_level_page_header,
+                        data.ptr + start_offset,
+                    ).*;
+
+                    var page_encodings = std.ArrayList(macho.compact_unwind_encoding_t).init(self.gpa);
+                    defer page_encodings.deinit();
+
+                    if (page_header.encodingsCount > 0) {
+                        try page_encodings.ensureTotalCapacityPrecise(page_header.encodingsCount);
+                        try writer.print("      Page encodings: (count = {d})\n", .{
+                            page_header.encodingsCount,
+                        });
+
+                        var pos = start_offset + page_header.encodingsPageOffset;
+                        var count: usize = 0;
+                        while (count < page_header.encodingsCount) : (count += 1) {
+                            const enc = @ptrCast(*align(1) const macho.compact_unwind_encoding_t, data.ptr + pos).*;
+                            try writer.print("        encoding[{d}]: 0x{x:0>8}\n", .{
+                                count + common_encodings.len,
+                                enc,
+                            });
+                            page_encodings.appendAssumeCapacity(enc);
+                            pos += @sizeOf(macho.compact_unwind_encoding_t);
+                        }
+                    }
+
+                    var pos = start_offset + page_header.entryPageOffset;
+                    var count: usize = 0;
+                    while (count < page_header.entryCount) : (count += 1) {
+                        const inner = @ptrCast(*align(1) const u32, data.ptr + pos).*;
+                        const func_offset = entry.functionOffset + (inner & 0xFFFFFF);
+                        const id = inner >> 24;
+                        const raw = if (id < common_encodings.len)
+                            common_encodings[id]
+                        else
+                            page_encodings.items[id - common_encodings.len];
+                        try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding[{d}]=0x{x:0>8}\n", .{
+                            count,
+                            func_offset,
+                            id,
+                            raw,
+                        });
+                        pos += @sizeOf(u32);
+                    }
+                },
                 else => return error.UnhandledSecondLevelKind,
             }
         }
