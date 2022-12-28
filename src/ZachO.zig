@@ -538,7 +538,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (common_encodings) |raw, i| {
             if (self.verbose) {
                 const enc = try macho.UnwindEncodingArm64.fromU32(raw);
-                try writer.print("    [{d}]\n", .{i});
+                try writer.print("    encoding[{d}]\n", .{i});
                 try formatCompactUnwindEncodingArm64(enc, writer, .{
                     .prefix = 6,
                 });
@@ -563,7 +563,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
                 const sym = self.findSymbolByAddress(ptr);
                 const name = self.getString(sym.n_strx);
-                try writer.print("    {d}: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
+                try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
             } else {
                 try writer.print("    personality[{d}]: 0x{x:0>8}\n", .{ i + 1, personality });
             }
@@ -581,17 +581,16 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
                 const name = self.getString(sym.n_strx);
 
-                try writer.print("    [{d}]\n", .{i});
-                try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                    "function:",
-                    entry.functionOffset,
-                    name,
+                try writer.print("    [{d}] {s}\n", .{ i, name });
+                try writer.print("      {s: <20} 0x{x:0>16}\n", .{
+                    "Function address:",
+                    seg.vmaddr + entry.functionOffset,
                 });
-                try writer.print("      {s: <20} 0x{x}\n", .{
-                    "second level pages:",
+                try writer.print("      {s: <20} 0x{x:0>8}\n", .{
+                    "Second level pages:",
                     entry.secondLevelPagesSectionOffset,
                 });
-                try writer.print("      {s: <20} 0x{x}\n", .{
+                try writer.print("      {s: <20} 0x{x:0>8}\n", .{
                     "LSDA index array:",
                     entry.lsdaIndexArraySectionOffset,
                 });
@@ -626,15 +625,14 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
                 const lsda_name = self.getString(lsda_sym.n_strx);
 
-                try writer.print("    [{d}]\n", .{i});
-                try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                    "Function offset:",
-                    lsda.functionOffset,
-                    func_name,
+                try writer.print("    [{d}] {s}\n", .{ i, func_name });
+                try writer.print("      {s: <20} 0x{x:0>16}\n", .{
+                    "Function address:",
+                    seg.vmaddr + lsda.functionOffset,
                 });
-                try writer.print("      {s: <20} 0x{x} {s}\n", .{
-                    "LSDA offset:",
-                    lsda.lsdaOffset,
+                try writer.print("      {s: <20} 0x{x:0>16} {s}\n", .{
+                    "LSDA address:",
+                    seg.vmaddr + lsda.lsdaOffset,
                     lsda_name,
                 });
             } else {
@@ -651,11 +649,20 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             const start_offset = entry.secondLevelPagesSectionOffset;
             if (start_offset == 0) break;
 
-            try writer.print("    Second level index[{d}]: offset in section=0x{x:0>8}, base function offset=0x{x:0>8}\n", .{
-                i,
-                entry.secondLevelPagesSectionOffset,
-                entry.functionOffset,
-            });
+            if (self.verbose) {
+                const seg = self.getSegmentByName("__TEXT").?;
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const func_name = self.getString(func_sym.n_strx);
+                try writer.print("    Second level index[{d}]: {s}\n", .{ i, func_name });
+                try writer.print("      Offset in section: 0x{x:0>8}\n", .{entry.secondLevelPagesSectionOffset});
+                try writer.print("      Function address: 0x{x:0>16}\n", .{seg.vmaddr + entry.functionOffset});
+            } else {
+                try writer.print("    Second level index[{d}]: offset in section=0x{x:0>8}, base function offset=0x{x:0>8}\n", .{
+                    i,
+                    entry.secondLevelPagesSectionOffset,
+                    entry.functionOffset,
+                });
+            }
 
             const kind = @intToEnum(
                 macho.UNWIND_SECOND_LEVEL,
@@ -676,11 +683,37 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                             *align(1) const macho.unwind_info_regular_second_level_entry,
                             data.ptr + pos,
                         ).*;
-                        try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding=0x{x:0>8}\n", .{
-                            count,
-                            inner.functionOffset,
-                            inner.encoding,
-                        });
+
+                        if (self.verbose) blk: {
+                            const seg = self.getSegmentByName("__TEXT").?;
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                            const func_name = self.getString(func_sym.n_strx);
+
+                            try writer.print("      [{d}] {s}\n", .{
+                                count,
+                                func_name,
+                            });
+                            try writer.print("        Function address: 0x{x:0>16}\n", .{
+                                seg.vmaddr + entry.functionOffset,
+                            });
+                            try writer.writeAll("        Encoding:\n");
+
+                            const enc = macho.UnwindEncodingArm64.fromU32(inner.encoding) catch |err| switch (err) {
+                                error.UnknownEncoding => if (inner.encoding == 0) {
+                                    try writer.writeAll("          none\n");
+                                    break :blk;
+                                } else return err,
+                            };
+                            try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                .prefix = 10,
+                            });
+                        } else {
+                            try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding=0x{x:0>8}\n", .{
+                                count,
+                                inner.functionOffset,
+                                inner.encoding,
+                            });
+                        }
                     }
                 },
                 .COMPRESSED => {
@@ -701,12 +734,27 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                         var pos = start_offset + page_header.encodingsPageOffset;
                         var count: usize = 0;
                         while (count < page_header.encodingsCount) : (count += 1) {
-                            const enc = @ptrCast(*align(1) const macho.compact_unwind_encoding_t, data.ptr + pos).*;
-                            try writer.print("        encoding[{d}]: 0x{x:0>8}\n", .{
-                                count + common_encodings.len,
-                                enc,
-                            });
-                            page_encodings.appendAssumeCapacity(enc);
+                            const raw = @ptrCast(*align(1) const macho.compact_unwind_encoding_t, data.ptr + pos).*;
+
+                            if (self.verbose) blk: {
+                                try writer.print("        encoding[{d}]\n", .{count + common_encodings.len});
+                                const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                                    error.UnknownEncoding => if (raw == 0) {
+                                        try writer.writeAll("          none\n");
+                                        break :blk;
+                                    } else return err,
+                                };
+                                try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                    .prefix = 10,
+                                });
+                            } else {
+                                try writer.print("        encoding[{d}]: 0x{x:0>8}\n", .{
+                                    count + common_encodings.len,
+                                    raw,
+                                });
+                            }
+
+                            page_encodings.appendAssumeCapacity(raw);
                             pos += @sizeOf(macho.compact_unwind_encoding_t);
                         }
                     }
@@ -721,12 +769,34 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                             common_encodings[id]
                         else
                             page_encodings.items[id - common_encodings.len];
-                        try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding[{d}]=0x{x:0>8}\n", .{
-                            count,
-                            func_offset,
-                            id,
-                            raw,
-                        });
+
+                        if (self.verbose) blk: {
+                            const seg = self.getSegmentByName("__TEXT").?;
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset);
+                            const func_name = self.getString(func_sym.n_strx);
+
+                            try writer.print("      [{d}] {s}\n", .{ count, func_name });
+                            try writer.print("        Function address: 0x{x:0>16}\n", .{seg.vmaddr + func_offset});
+
+                            const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                                error.UnknownEncoding => if (raw == 0) {
+                                    try writer.writeAll("          none\n");
+                                    break :blk;
+                                } else return err,
+                            };
+                            try writer.writeAll("        Encoding\n");
+                            try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                .prefix = 10,
+                            });
+                        } else {
+                            try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding[{d}]=0x{x:0>8}\n", .{
+                                count,
+                                func_offset,
+                                id,
+                                raw,
+                            });
+                        }
+
                         pos += @sizeOf(u32);
                     }
                 },
