@@ -476,21 +476,69 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
         const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
 
+        const FindRelocs = struct {
+            relocs: []align(1) const macho.relocation_info,
+
+            pub fn find(this: @This(), address: u64, size: u64) []align(1) const macho.relocation_info {
+                var i: usize = 0;
+                const start = while (i < this.relocs.len) : (i += 1) {
+                    const rel = this.relocs[i];
+                    if (rel.r_address < address + size) break i;
+                } else this.relocs.len;
+
+                i = start;
+                const end = while (i < this.relocs.len) : (i += 1) {
+                    const rel = this.relocs[i];
+                    if (rel.r_address < address) break i;
+                } else this.relocs.len;
+
+                return this.relocs[start..end];
+            }
+        };
+        const relocs = @ptrCast([*]align(1) const macho.relocation_info, self.data.ptr + sect.reloff)[0..sect.nreloc];
+        const allRelocs = FindRelocs{ .relocs = relocs };
+
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
 
         for (entries) |entry, i| {
-            const sym = self.findSymbolByAddress(entry.rangeStart);
-            const name = self.getString(sym.n_strx);
+            const base_offset = i * @sizeOf(macho.compact_unwind_entry);
+
+            const entry_relocs = allRelocs.find(base_offset, @sizeOf(macho.compact_unwind_entry));
+            const singleReloc = FindRelocs{ .relocs = entry_relocs };
+
+            const personality = blk: {
+                const rel = singleReloc.find(base_offset + 16, 8);
+                if (rel.len == 0) break :blk null;
+                assert(rel.len == 1 and rel[0].r_extern == 1);
+                break :blk self.symtab[rel[0].r_symbolnum];
+            };
+
+            const func_sym = self.findSymbolByAddress(entry.rangeStart);
+            const func_name = self.getString(func_sym.n_strx);
             const enc = try macho.UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
-            try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
-            try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
-            try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
+            try writer.print("    {s: <22} 0x{x} {s}\n", .{ "start:", entry.rangeStart, func_name });
+            try writer.print("    {s: <22} 0x{x}\n", .{ "length:", entry.rangeLength });
+            if (personality) |x| {
+                try writer.print("    {s: <22} 0x{x} {s}\n", .{
+                    "personality function:",
+                    entry.personalityFunction,
+                    self.getString(x.n_strx),
+                });
+            }
+            if (entry.lsda > 0) {
+                const lsda_sym = self.findSymbolByAddress(entry.lsda);
+                const lsda_name = self.getString(lsda_sym.n_strx);
+                try writer.print("    {s: <22} 0x{x} {s}\n", .{ "LSDA:", entry.lsda, lsda_name });
+            }
+            try writer.print("    {s: <22} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
 
-            try formatCompactUnwindEncodingArm64(enc, writer, .{
-                .prefix = 12,
-            });
+            if (self.verbose) {
+                try formatCompactUnwindEncodingArm64(enc, writer, .{
+                    .prefix = 12,
+                });
+            }
         }
     } else {
         const sect = self.getSectionByName("__TEXT", "__unwind_info") orelse {
