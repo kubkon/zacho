@@ -1491,6 +1491,82 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
     }
 }
 
+pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
+    if (self.symtab_lc == null) {
+        try writer.writeAll("\nNo symbol table found in the object file.\n");
+        return;
+    }
+
+    try writer.writeAll("\nSymbol table:\n");
+
+    for (self.getSymbols()) |sym| {
+        if (sym.stab()) continue; // TODO
+
+        const sym_name = self.getString(sym.n_strx);
+
+        if (sym.sect()) {
+            const sect = self.getSectionByIndex(sym.n_sect);
+            try writer.print("  0x{x:0>16} ({s},{s})", .{
+                sym.n_value,
+                sect.segName(),
+                sect.sectName(),
+            });
+
+            if (sym.n_desc & macho.REFERENCED_DYNAMICALLY != 0) {
+                try writer.writeAll(" [referenced dynamically]");
+            }
+
+            if (sym.ext()) {
+                try writer.writeAll(" external");
+            } else {
+                try writer.writeAll(" non-external");
+            }
+
+            try writer.print(" {s}\n", .{sym_name});
+        } else if (sym.tentative()) {
+            const alignment = (sym.n_desc >> 8) & 0x0F;
+            try writer.print("  0x{x:0>16} (common) (alignment 2^{d})", .{ sym.n_value, alignment });
+
+            if (sym.ext()) {
+                try writer.writeAll(" external");
+            } else {
+                try writer.writeAll(" non-external");
+            }
+
+            try writer.print(" {s}\n", .{sym_name});
+        } else {
+            try writer.print("    {s: >16} (undefined)", .{" "});
+
+            if (sym.ext()) {
+                try writer.writeAll(" external");
+            }
+
+            try writer.print(" {s}", .{sym_name});
+
+            const ord = @divTrunc(@bitCast(i16, sym.n_desc), macho.N_SYMBOL_RESOLVER);
+            switch (ord) {
+                macho.BIND_SPECIAL_DYLIB_FLAT_LOOKUP => {}, // TODO
+                macho.BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE => {}, // TODO
+                macho.BIND_SPECIAL_DYLIB_SELF => {}, // TODO
+                else => {
+                    const dylib = self.getDylibByIndex(@intCast(u16, ord));
+                    const full_path = dylib.getDylibPathName();
+                    const leaf_path = std.fs.path.basename(full_path);
+                    var name = leaf_path;
+                    while (true) {
+                        const ext = std.fs.path.extension(name);
+                        if (ext.len == 0) break;
+                        name = name[0 .. name.len - ext.len];
+                    }
+                    try writer.print(" (from {s})", .{name});
+                },
+            }
+
+            try writer.writeByte('\n');
+        }
+    }
+}
+
 fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     const data = self.data[@sizeOf(macho.mach_header_64)..][0..self.header.sizeofcmds];
     return .{
@@ -1559,6 +1635,26 @@ fn getSectionByAddress(self: ZachO, addr: u64) ?macho.section_64 {
         }
     } else return null;
     return sect;
+}
+
+fn getSectionByIndex(self: ZachO, index: u8) macho.section_64 {
+    var count: u8 = 1;
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const sects = lc.getSections();
+            if (index > count + sects.len) {
+                count += @intCast(u8, sects.len);
+                continue;
+            }
+
+            for (sects) |sect| {
+                if (index == count) return sect;
+                count += 1;
+            }
+        },
+        else => {},
+    } else unreachable;
 }
 
 fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
@@ -1634,4 +1730,16 @@ fn sliceContentsByAddress(self: ZachO, addr: u64, size: u64) ?[]const u8 {
     const offset = addr - sect.addr + sect.offset;
     assert(offset + size < sect.offset + sect.size);
     return self.data[offset..][0..size];
+}
+
+fn getDylibByIndex(self: ZachO, index: u16) macho.LoadCommandIterator.LoadCommand {
+    var count: u16 = 1;
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .LOAD_DYLIB => {
+            if (count == index) return lc;
+            count += 1;
+        },
+        else => {},
+    } else unreachable;
 }
