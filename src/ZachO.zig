@@ -668,7 +668,20 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                         *align(1) const macho.unwind_info_regular_second_level_page_header,
                         data.ptr + start_offset,
                     ).*;
-                    std.log.warn("{}", .{page_header});
+
+                    var pos = start_offset + page_header.entryPageOffset;
+                    var count: usize = 0;
+                    while (count < page_header.entryCount) : (count += 1) {
+                        const inner = @ptrCast(
+                            *align(1) const macho.unwind_info_regular_second_level_entry,
+                            data.ptr + pos,
+                        ).*;
+                        try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding=0x{x:0>8}\n", .{
+                            count,
+                            inner.functionOffset,
+                            inner.encoding,
+                        });
+                    }
                 },
                 .COMPRESSED => {
                     const page_header = @ptrCast(
