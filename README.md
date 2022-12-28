@@ -11,8 +11,7 @@ refuse to load your hand-crafter binary, or you just like looking at Mach-O diss
 ## Usage
 
 ```
-zacho --help
-zacho [-hldc] [--help] [--verify-memory-layout] <FILE>
+zacho [-hlducv] [--help] [--verify-memory-layout] <FILE>
         --help
             Display this help and exit.
 
@@ -25,11 +24,17 @@ zacho [-hldc] [--help] [--verify-memory-layout] <FILE>
     -d, --dyld-info
             Print the contents of dyld rebase and bind opcodes.
 
+    -u, --unwind-info
+            Print the contents of (compact) unwind info section (if any).
+
     -c, --code-signature
             Print the contents of code signature (if any).
 
         --verify-memory-layout
             Print virtual memory layout and verify there is no overlap.
+
+    -v, --verbose
+            Print more detailed info for each flag (if available).
 ```
 
 Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
