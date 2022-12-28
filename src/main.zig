@@ -12,13 +12,14 @@ pub fn main() !void {
 
     const params = comptime [_]clap.Param(clap.Help){
         clap.parseParam("--help                 Display this help and exit.") catch unreachable,
+        clap.parseParam("-c, --code-signature   Print the contents of code signature (if any).") catch unreachable,
+        clap.parseParam("-d, --dyld-info        Print the contents of dyld rebase and bind opcodes.") catch unreachable,
         clap.parseParam("-h, --header           Print the Mach-O header.") catch unreachable,
         clap.parseParam("-l, --load-commands    Print load commands.") catch unreachable,
-        clap.parseParam("-d, --dyld-info        Print the contents of dyld rebase and bind opcodes.") catch unreachable,
+        clap.parseParam("-s, --symbol-table     Print the symbol table.") catch unreachable,
         clap.parseParam("-u, --unwind-info      Print the contents of (compact) unwind info section (if any).") catch unreachable,
-        clap.parseParam("-c, --code-signature   Print the contents of code signature (if any).") catch unreachable,
-        clap.parseParam("--verify-memory-layout Print virtual memory layout and verify there is no overlap.") catch unreachable,
         clap.parseParam("-v, --verbose          Print more detailed info for each flag (if available).") catch unreachable,
+        clap.parseParam("--verify-memory-layout Print virtual memory layout and verify there is no overlap.") catch unreachable,
         clap.parseParam("<FILE>") catch unreachable,
     };
 
@@ -64,6 +65,9 @@ pub fn main() !void {
     }
     if (res.args.@"verify-memory-layout") {
         try zacho.verifyMemoryLayout(stdout);
+    }
+    if (res.args.@"symbol-table") {
+        try zacho.printSymbolTable(stdout);
     }
 }
 
