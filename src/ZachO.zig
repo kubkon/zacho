@@ -456,6 +456,56 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
+const UnwindInfoRelocTarget = packed struct {
+    tag: enum(u8) { symbol, section },
+    index: u24,
+};
+
+fn getUnwindInfoRelocTarget(self: ZachO, rel: macho.relocation_info) UnwindInfoRelocTarget {
+    if (rel.r_extern == 1) {
+        return .{
+            .tag = .symbol,
+            .index = @intCast(u24, self.source_symtab_lookup[rel.r_symbolnum]),
+        };
+    }
+    return .{
+        .tag = .section,
+        .index = rel.r_symbolnum,
+    };
+}
+
+fn getUnwindInfoTargetNameAndAddend(self: ZachO, rel: macho.relocation_info, code: u64) struct {
+    name: []const u8,
+    addend: u64,
+} {
+    const target = self.getUnwindInfoRelocTarget(rel);
+    switch (target.tag) {
+        .symbol => {
+            const sym = self.symtab[target.index];
+            const sym_name = self.getString(sym.n_strx);
+            return .{
+                .name = sym_name,
+                .addend = code,
+            };
+        },
+        .section => {
+            if (self.findSymbolByAddress(code)) |sym| {
+                const sym_name = self.getString(sym.n_strx);
+                return .{
+                    .name = sym_name,
+                    .addend = code - sym.n_value,
+                };
+            } else {
+                const sect = self.getSectionByIndex(@intCast(u8, target.index));
+                return .{
+                    .name = sect.sectName(), // TODO alloc buffer to hold segname,sectname
+                    .addend = code - sect.addr,
+                };
+            }
+        },
+    }
+}
+
 pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
@@ -475,22 +525,66 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
         const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
+        const relocs = @ptrCast([*]align(1) const macho.relocation_info, self.data.ptr + sect.reloff)[0..sect.nreloc];
 
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
 
         for (entries) |entry, i| {
-            const sym = self.findSymbolByAddress(entry.rangeStart);
-            const name = self.getString(sym.n_strx);
+            const base_offset = i * @sizeOf(macho.compact_unwind_entry);
+            const entry_relocs = filterRelocsByAddress(relocs, base_offset, @sizeOf(macho.compact_unwind_entry));
+            const func = blk: {
+                const rel = filterRelocsByAddress(entry_relocs, base_offset, 8);
+                assert(rel.len == 1);
+                break :blk self.getUnwindInfoTargetNameAndAddend(rel[0], entry.rangeStart);
+            };
+            const personality = blk: {
+                const rel = filterRelocsByAddress(entry_relocs, base_offset + 16, 8);
+                if (rel.len == 0) break :blk null;
+                assert(rel.len == 1);
+                break :blk self.getUnwindInfoTargetNameAndAddend(rel[0], entry.personalityFunction);
+            };
+            const lsda = blk: {
+                const rel = filterRelocsByAddress(entry_relocs, base_offset + 24, 8);
+                if (rel.len == 0) break :blk null;
+                assert(rel.len == 1);
+                break :blk self.getUnwindInfoTargetNameAndAddend(rel[0], entry.lsda);
+            };
             const enc = try macho.UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
-            try writer.print("    {s: <20} 0x{x} {s}\n", .{ "start:", entry.rangeStart, name });
-            try writer.print("    {s: <20} 0x{x}\n", .{ "length:", entry.rangeLength });
-            try writer.print("    {s: <20} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
+            try writer.print("    {s: <22} 0x{x}", .{ "start:", entry.rangeStart });
+            if (func.addend > 0) {
+                try writer.print(" + {x}", .{func.addend});
+            }
+            try writer.print(" {s}\n", .{func.name});
+            try writer.print("    {s: <22} 0x{x}\n", .{ "length:", entry.rangeLength });
 
-            try formatCompactUnwindEncodingArm64(enc, writer, .{
-                .prefix = 12,
-            });
+            if (!self.verbose) {
+                try writer.print("    {s: <22} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
+            }
+
+            if (personality) |x| {
+                try writer.print("    {s: <22} 0x{x}", .{ "personality function:", entry.personalityFunction });
+                if (x.addend > 0) {
+                    try writer.print(" + {x}", .{x.addend});
+                }
+                try writer.print(" {s}\n", .{x.name});
+            }
+
+            if (lsda) |x| {
+                try writer.print("    {s: <22} 0x{x}", .{ "LSDA:", entry.lsda });
+                if (x.addend > 0) {
+                    try writer.print(" + {x}", .{x.addend});
+                }
+                try writer.print(" {s}\n", .{x.name});
+            }
+
+            if (self.verbose) {
+                try writer.print("    {s: <22}\n", .{"compact encoding:"});
+                try formatCompactUnwindEncodingArm64(enc, writer, .{
+                    .prefix = 12,
+                });
+            }
         }
     } else {
         const sect = self.getSectionByName("__TEXT", "__unwind_info") orelse {
@@ -561,7 +655,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const target_sect = self.getSectionByAddress(addr).?;
                 assert(target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS);
                 const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
-                const sym = self.findSymbolByAddress(ptr);
+                const sym = self.findSymbolByAddress(ptr).?;
                 const name = self.getString(sym.n_strx);
                 try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
             } else {
@@ -578,7 +672,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (indexes) |entry, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                 const name = self.getString(sym.n_strx);
 
                 try writer.print("    [{d}] {s}\n", .{ i, name });
@@ -620,9 +714,9 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (lsdas) |lsda, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset);
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset).?;
                 const func_name = self.getString(func_sym.n_strx);
-                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
+                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset).?;
                 const lsda_name = self.getString(lsda_sym.n_strx);
 
                 try writer.print("    [{d}] {s}\n", .{ i, func_name });
@@ -651,7 +745,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                 const func_name = self.getString(func_sym.n_strx);
                 try writer.print("    Second level index[{d}]: {s}\n", .{ i, func_name });
                 try writer.print("      Offset in section: 0x{x:0>8}\n", .{entry.secondLevelPagesSectionOffset});
@@ -686,7 +780,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                             const func_name = self.getString(func_sym.n_strx);
 
                             try writer.print("      [{d}] {s}\n", .{
@@ -772,7 +866,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset);
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset).?;
                             const func_name = self.getString(func_sym.n_strx);
 
                             try writer.print("      [{d}] {s}\n", .{ count, func_name });
@@ -1587,14 +1681,14 @@ fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
     return symtab[index];
 }
 
-fn findSymbolByAddress(self: *const ZachO, addr: u64) macho.nlist_64 {
+fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
     assert(self.symtab.len > 0);
     for (self.symtab) |sym, i| {
         if (sym.stab()) continue;
         if (sym.n_value > addr or sym.undf()) {
             return self.symtab[i - 1];
         }
-    } else return self.symtab[self.symtab.len - 1];
+    } else return null;
 }
 
 fn getString(self: *const ZachO, off: u32) []const u8 {
@@ -1742,4 +1836,24 @@ fn getDylibByIndex(self: ZachO, index: u16) macho.LoadCommandIterator.LoadComman
         },
         else => {},
     } else unreachable;
+}
+
+fn filterRelocsByAddress(
+    relocs: []align(1) const macho.relocation_info,
+    address: u64,
+    size: u64,
+) []align(1) const macho.relocation_info {
+    var i: usize = 0;
+    const start = while (i < relocs.len) : (i += 1) {
+        const rel = relocs[i];
+        if (rel.r_address < address + size) break i;
+    } else relocs.len;
+
+    i = start;
+    const end = while (i < relocs.len) : (i += 1) {
+        const rel = relocs[i];
+        if (rel.r_address < address) break i;
+    } else relocs.len;
+
+    return relocs[start..end];
 }
