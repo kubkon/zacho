@@ -489,15 +489,19 @@ fn getUnwindInfoTargetNameAndAddend(self: ZachO, rel: macho.relocation_info, cod
             };
         },
         .section => {
-            const sect = self.getSectionByIndex(@intCast(u8, target.index));
-            _ = sect;
-            const addr = code;
-            const sym = self.findSymbolByAddress(addr);
-            const sym_name = self.getString(sym.n_strx);
-            return .{
-                .name = sym_name,
-                .addend = addr - sym.n_value,
-            };
+            if (self.findSymbolByAddress(code)) |sym| {
+                const sym_name = self.getString(sym.n_strx);
+                return .{
+                    .name = sym_name,
+                    .addend = code - sym.n_value,
+                };
+            } else {
+                const sect = self.getSectionByIndex(@intCast(u8, target.index));
+                return .{
+                    .name = sect.sectName(), // TODO alloc buffer to hold segname,sectname
+                    .addend = code - sect.addr,
+                };
+            }
         },
     }
 }
@@ -521,7 +525,6 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
         const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
-
         const relocs = @ptrCast([*]align(1) const macho.relocation_info, self.data.ptr + sect.reloff)[0..sect.nreloc];
 
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
@@ -652,7 +655,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const target_sect = self.getSectionByAddress(addr).?;
                 assert(target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS);
                 const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
-                const sym = self.findSymbolByAddress(ptr);
+                const sym = self.findSymbolByAddress(ptr).?;
                 const name = self.getString(sym.n_strx);
                 try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
             } else {
@@ -669,7 +672,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (indexes) |entry, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                 const name = self.getString(sym.n_strx);
 
                 try writer.print("    [{d}] {s}\n", .{ i, name });
@@ -711,9 +714,9 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
         for (lsdas) |lsda, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset);
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset).?;
                 const func_name = self.getString(func_sym.n_strx);
-                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset);
+                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset).?;
                 const lsda_name = self.getString(lsda_sym.n_strx);
 
                 try writer.print("    [{d}] {s}\n", .{ i, func_name });
@@ -742,7 +745,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                 const func_name = self.getString(func_sym.n_strx);
                 try writer.print("    Second level index[{d}]: {s}\n", .{ i, func_name });
                 try writer.print("      Offset in section: 0x{x:0>8}\n", .{entry.secondLevelPagesSectionOffset});
@@ -777,7 +780,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset);
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
                             const func_name = self.getString(func_sym.n_strx);
 
                             try writer.print("      [{d}] {s}\n", .{
@@ -863,7 +866,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset);
+                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset).?;
                             const func_name = self.getString(func_sym.n_strx);
 
                             try writer.print("      [{d}] {s}\n", .{ count, func_name });
@@ -1678,14 +1681,14 @@ fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
     return symtab[index];
 }
 
-fn findSymbolByAddress(self: *const ZachO, addr: u64) macho.nlist_64 {
+fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
     assert(self.symtab.len > 0);
     for (self.symtab) |sym, i| {
         if (sym.stab()) continue;
         if (sym.n_value > addr or sym.undf()) {
             return self.symtab[i - 1];
         }
-    } else return self.symtab[self.symtab.len - 1];
+    } else return null;
 }
 
 fn getString(self: *const ZachO, off: u32) []const u8 {
