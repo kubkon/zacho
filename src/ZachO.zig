@@ -456,57 +456,49 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
-const UnwindInfoRelocTarget = packed struct {
-    tag: enum(u8) { symbol, section },
-    index: u24,
+const UnwindInfoTargetNameAndAddend = struct {
+    tag: enum { symbol, section },
+    name: u32,
+    addend: u64,
+
+    fn getName(self: UnwindInfoTargetNameAndAddend, zacho: *const ZachO) []const u8 {
+        switch (self.tag) {
+            .symbol => return zacho.getString(self.name),
+            .section => return zacho.getSectionByIndex(@intCast(u8, self.name)).sectName(),
+        }
+    }
 };
 
-fn getUnwindInfoRelocTarget(self: ZachO, rel: macho.relocation_info) UnwindInfoRelocTarget {
+fn getUnwindInfoTargetNameAndAddend(
+    self: *const ZachO,
+    rel: macho.relocation_info,
+    code: u64,
+) UnwindInfoTargetNameAndAddend {
     if (rel.r_extern == 1) {
+        const sym = self.symtab[rel.r_symbolnum];
         return .{
             .tag = .symbol,
-            .index = @intCast(u24, self.source_symtab_lookup[rel.r_symbolnum]),
+            .name = sym.n_strx,
+            .addend = code,
         };
     }
-    return .{
-        .tag = .section,
-        .index = rel.r_symbolnum,
-    };
-}
-
-fn getUnwindInfoTargetNameAndAddend(self: ZachO, rel: macho.relocation_info, code: u64) struct {
-    name: []const u8,
-    addend: u64,
-} {
-    const target = self.getUnwindInfoRelocTarget(rel);
-    switch (target.tag) {
-        .symbol => {
-            const sym = self.symtab[target.index];
-            const sym_name = self.getString(sym.n_strx);
-            return .{
-                .name = sym_name,
-                .addend = code,
-            };
-        },
-        .section => {
-            if (self.findSymbolByAddress(code)) |sym| {
-                const sym_name = self.getString(sym.n_strx);
-                return .{
-                    .name = sym_name,
-                    .addend = code - sym.n_value,
-                };
-            } else {
-                const sect = self.getSectionByIndex(@intCast(u8, target.index));
-                return .{
-                    .name = sect.sectName(), // TODO alloc buffer to hold segname,sectname
-                    .addend = code - sect.addr,
-                };
-            }
-        },
+    if (self.findSymbolByAddress(code)) |sym| {
+        return .{
+            .tag = .symbol,
+            .name = sym.n_strx,
+            .addend = code - sym.n_value,
+        };
+    } else {
+        const sect = self.getSectionByIndex(@intCast(u8, rel.r_symbolnum));
+        return .{
+            .tag = .section,
+            .name = rel.r_symbolnum,
+            .addend = code - sect.addr,
+        };
     }
 }
 
-pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
+pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
     if (is_obj) {
@@ -556,7 +548,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
             if (func.addend > 0) {
                 try writer.print(" + {x}", .{func.addend});
             }
-            try writer.print(" {s}\n", .{func.name});
+            try writer.print(" {s}\n", .{func.getName(self)});
             try writer.print("    {s: <22} 0x{x}\n", .{ "length:", entry.rangeLength });
 
             if (!self.verbose) {
@@ -568,7 +560,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 if (x.addend > 0) {
                     try writer.print(" + {x}", .{x.addend});
                 }
-                try writer.print(" {s}\n", .{x.name});
+                try writer.print(" {s}\n", .{x.getName(self)});
             }
 
             if (lsda) |x| {
@@ -576,7 +568,7 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 if (x.addend > 0) {
                     try writer.print(" + {x}", .{x.addend});
                 }
-                try writer.print(" {s}\n", .{x.name});
+                try writer.print(" {s}\n", .{x.getName(self)});
             }
 
             if (self.verbose) {
@@ -1691,7 +1683,8 @@ fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
 }
 
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
-    if (addr == 0) return null;
+    const is_obj = self.header.filetype == macho.MH_OBJECT;
+    if (addr == 0 and !is_obj) return null;
     assert(self.symtab.len > 0);
     for (self.symtab) |sym, i| {
         if (sym.stab()) continue;
