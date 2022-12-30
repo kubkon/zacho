@@ -655,9 +655,18 @@ pub fn printUnwindInfo(self: ZachO, writer: anytype) !void {
                 const target_sect = self.getSectionByAddress(addr).?;
                 assert(target_sect.flags == macho.S_NON_LAZY_SYMBOL_POINTERS);
                 const ptr = self.getGotPointerAtIndex(@divExact(addr - target_sect.addr, 8));
-                const sym = self.findSymbolByAddress(ptr).?;
-                const name = self.getString(sym.n_strx);
-                try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
+                if (self.findSymbolByAddress(ptr)) |sym| {
+                    const name = self.getString(sym.n_strx);
+                    try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{ i + 1, addr, ptr, name });
+                } else {
+                    // TODO we need to parse DYSYMTAB and figure out which import we are referring to
+                    try writer.print("    personality[{d}]: 0x{x} -> 0x{x} {s}\n", .{
+                        i + 1,
+                        addr,
+                        ptr,
+                        "(undefined)",
+                    });
+                }
             } else {
                 try writer.print("    personality[{d}]: 0x{x:0>8}\n", .{ i + 1, personality });
             }
@@ -1682,6 +1691,7 @@ fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
 }
 
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
+    if (addr == 0) return null;
     assert(self.symtab.len > 0);
     for (self.symtab) |sym, i| {
         if (sym.stab()) continue;
@@ -1757,25 +1767,21 @@ fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
     const ptr = @ptrCast(*align(1) const u64, data[index * 8 ..]).*;
 
     const mask = 0xFFFF000000000000; // TODO I guessed the value of the mask, so verify!
-    if (mask & ptr == 0) {
-        // Old-style GOT with actual pointer values
-        return ptr;
-    }
-
-    const actual_ptr = synthesiseGotPointerValue(data, index);
-    const seg = self.getSegmentByName("__TEXT").?;
-    return seg.vmaddr + actual_ptr;
-}
-
-fn synthesiseGotPointerValue(data: []const u8, index: usize) u64 {
-    const enc_mask = 0xFFFF000000000000; // TODO I guessed the value of the mask, so verify!
-    const value_mask = 0xFFFFFFFFFFFF;
-    const ptr = @ptrCast(*align(1) const u64, data[index * 8 ..]).*;
-
-    switch ((enc_mask & ptr) >> 48) {
-        0x0010 => return value_mask & ptr, // Start offset value
-        0x8010 => return (value_mask & ptr) + synthesiseGotPointerValue(data, index - 1),
-        else => unreachable,
+    switch ((mask & ptr) >> 48) {
+        0x0 => {
+            // Old-style GOT with actual pointer values
+            return ptr;
+        },
+        0x10 => {
+            // indirect local
+            const offset = 0xFFFFFFFFFFFF & ptr;
+            const seg = self.getSegmentByName("__TEXT").?;
+            return seg.vmaddr + offset;
+        },
+        else => {
+            // TODO parse opcodes
+            return 0x0;
+        },
     }
 }
 
