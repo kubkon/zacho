@@ -17,19 +17,12 @@ header: macho.mach_header_64,
 data: []align(@alignOf(u64)) const u8,
 
 symtab_lc: ?macho.symtab_command = null,
-symtab: []macho.nlist_64 = undefined,
-source_symtab_lookup: []u32 = undefined,
-
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 
 verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
-    if (self.symtab_lc) |_| {
-        self.gpa.free(self.symtab);
-        self.gpa.free(self.source_symtab_lookup);
-    }
 }
 
 pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
@@ -52,95 +45,13 @@ pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
 
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
-        .SYMTAB => {
-            self.symtab_lc = lc.cast(macho.symtab_command).?;
-
-            const symtab = self.getSymbols();
-            self.symtab = try self.gpa.alloc(macho.nlist_64, symtab.len);
-            self.source_symtab_lookup = try self.gpa.alloc(u32, symtab.len);
-
-            var sorted_all_syms = try std.ArrayList(SymbolAtIndex).initCapacity(self.gpa, symtab.len);
-            defer sorted_all_syms.deinit();
-
-            for (symtab) |_, index| {
-                sorted_all_syms.appendAssumeCapacity(.{ .index = @intCast(u32, index) });
-            }
-
-            const ctx = SymbolAtIndex.Context{
-                .symtab = symtab,
-                .strtab = self.data[self.symtab_lc.?.stroff..][0..self.symtab_lc.?.strsize],
-            };
-
-            std.sort.sort(SymbolAtIndex, sorted_all_syms.items, ctx, SymbolAtIndex.lessThan);
-
-            for (sorted_all_syms.items) |sym_id, i| {
-                const sym = sym_id.getSymbol(ctx);
-                self.symtab[i] = sym;
-                self.source_symtab_lookup[i] = sym_id.index;
-            }
-        },
+        .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
         else => {},
     };
 
     return self;
 }
-
-const SymbolAtIndex = struct {
-    index: u32,
-
-    const Context = struct {
-        symtab: []align(1) const macho.nlist_64,
-        strtab: []const u8,
-    };
-
-    fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
-        return ctx.symtab[self.index];
-    }
-
-    fn getSymbolName(self: SymbolAtIndex, ctx: Context) []const u8 {
-        const off = self.getSymbol(ctx).n_strx;
-        return mem.sliceTo(@ptrCast([*:0]const u8, ctx.strtab.ptr + off), 0);
-    }
-
-    /// Performs lexicographic-like check.
-    /// * lhs and rhs defined
-    ///   * if lhs == rhs
-    ///     * if lhs.n_sect == rhs.n_sect
-    ///       * ext < weak < local < temp
-    ///     * lhs.n_sect < rhs.n_sect
-    ///   * lhs < rhs
-    /// * !rhs is undefined
-    fn lessThan(ctx: Context, lhs_index: SymbolAtIndex, rhs_index: SymbolAtIndex) bool {
-        const lhs = lhs_index.getSymbol(ctx);
-        const rhs = rhs_index.getSymbol(ctx);
-        if (lhs.sect() and rhs.sect()) {
-            if (lhs.n_value == rhs.n_value) {
-                if (lhs.n_sect == rhs.n_sect) {
-                    if (lhs.ext() and rhs.ext()) {
-                        if ((lhs.pext() or lhs.weakDef()) and (rhs.pext() or rhs.weakDef())) {
-                            return false;
-                        } else return rhs.pext() or rhs.weakDef();
-                    } else {
-                        const lhs_name = lhs_index.getSymbolName(ctx);
-                        const lhs_temp = mem.startsWith(u8, lhs_name, "l") or mem.startsWith(u8, lhs_name, "L");
-                        const rhs_name = rhs_index.getSymbolName(ctx);
-                        const rhs_temp = mem.startsWith(u8, rhs_name, "l") or mem.startsWith(u8, rhs_name, "L");
-                        if (lhs_temp and rhs_temp) {
-                            return false;
-                        } else return rhs_temp;
-                    }
-                } else return lhs.n_sect < rhs.n_sect;
-            } else return lhs.n_value < rhs.n_value;
-        } else if (lhs.undf() and rhs.undf()) {
-            return false;
-        } else return rhs.undf();
-    }
-
-    fn lessThanByNStrx(ctx: Context, lhs: SymbolAtIndex, rhs: SymbolAtIndex) bool {
-        return lhs.getSymbol(ctx).n_strx < rhs.getSymbol(ctx).n_strx;
-    }
-};
 
 pub fn printHeader(self: ZachO, writer: anytype) !void {
     const header = self.header;
@@ -475,7 +386,7 @@ fn getUnwindInfoTargetNameAndAddend(
     code: u64,
 ) UnwindInfoTargetNameAndAddend {
     if (rel.r_extern == 1) {
-        const sym = self.symtab[rel.r_symbolnum];
+        const sym = self.getSymtab()[rel.r_symbolnum];
         return .{
             .tag = .symbol,
             .name = sym.n_strx,
@@ -673,8 +584,10 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         for (indexes) |entry, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
-                const name = self.getString(sym.n_strx);
+                const name = if (self.findSymbolByAddress(seg.vmaddr + entry.functionOffset)) |sym|
+                    self.getString(sym.n_strx)
+                else
+                    "unknown";
 
                 try writer.print("    [{d}] {s}\n", .{ i, name });
                 try writer.print("      {s: <20} 0x{x:0>16}\n", .{
@@ -715,10 +628,14 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         for (lsdas) |lsda, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset).?;
-                const func_name = self.getString(func_sym.n_strx);
-                const lsda_sym = self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset).?;
-                const lsda_name = self.getString(lsda_sym.n_strx);
+                const func_name = if (self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset)) |sym|
+                    self.getString(sym.n_strx)
+                else
+                    "unknown";
+                const lsda_name = if (self.findSymbolByAddress(seg.vmaddr + lsda.lsdaOffset)) |sym|
+                    self.getString(sym.n_strx)
+                else
+                    "unknown";
 
                 try writer.print("    [{d}] {s}\n", .{ i, func_name });
                 try writer.print("      {s: <20} 0x{x:0>16}\n", .{
@@ -746,8 +663,10 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
-                const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
-                const func_name = self.getString(func_sym.n_strx);
+                const func_name = if (self.findSymbolByAddress(seg.vmaddr + entry.functionOffset)) |func_sym|
+                    self.getString(func_sym.n_strx)
+                else
+                    "unknown";
                 try writer.print("    Second level index[{d}]: {s}\n", .{ i, func_name });
                 try writer.print("      Offset in section: 0x{x:0>8}\n", .{entry.secondLevelPagesSectionOffset});
                 try writer.print("      Function address: 0x{x:0>16}\n", .{seg.vmaddr + entry.functionOffset});
@@ -781,8 +700,10 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + entry.functionOffset).?;
-                            const func_name = self.getString(func_sym.n_strx);
+                            const func_name = if (self.findSymbolByAddress(seg.vmaddr + entry.functionOffset)) |sym|
+                                self.getString(sym.n_strx)
+                            else
+                                "unknown";
 
                             try writer.print("      [{d}] {s}\n", .{
                                 count,
@@ -867,8 +788,10 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_sym = self.findSymbolByAddress(seg.vmaddr + func_offset).?;
-                            const func_name = self.getString(func_sym.n_strx);
+                            const func_name = if (self.findSymbolByAddress(seg.vmaddr + func_offset)) |func_sym|
+                                self.getString(func_sym.n_strx)
+                            else
+                                "unknown";
 
                             try writer.print("      [{d}] {s}\n", .{ count, func_name });
                             try writer.print("        Function address: 0x{x:0>16}\n", .{seg.vmaddr + func_offset});
@@ -1594,7 +1517,7 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
 
     try writer.writeAll("\nSymbol table:\n");
 
-    for (self.getSymbols()) |sym| {
+    for (self.getSymtab()) |sym| {
         if (sym.stab()) continue; // TODO
 
         const sym_name = self.getString(sym.n_strx);
@@ -1670,28 +1593,26 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     };
 }
 
-fn getSymbols(self: *const ZachO) []align(1) const macho.nlist_64 {
+fn getSymtab(self: *const ZachO) []align(1) const macho.nlist_64 {
     const lc = self.symtab_lc orelse return &[0]macho.nlist_64{};
     const symtab = @ptrCast([*]align(1) const macho.nlist_64, self.data.ptr + lc.symoff)[0..lc.nsyms];
     return symtab;
 }
 
-fn getSymbol(self: *const ZachO, index: u32) macho.nlist_64 {
-    const symtab = self.getSymbols().?;
-    assert(index < symtab.len);
-    return symtab[index];
-}
-
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
-    const is_obj = self.header.filetype == macho.MH_OBJECT;
-    if (addr == 0 and !is_obj) return null;
-    assert(self.symtab.len > 0);
-    for (self.symtab) |sym, i| {
-        if (sym.stab()) continue;
-        if (sym.n_value > addr or sym.undf()) {
-            return self.symtab[i - 1];
-        }
-    } else return null;
+    const symtab = self.getSymtab();
+    for (symtab) |sym| {
+        if (sym.undf() or sym.tentative()) continue;
+        if (sym.stab()) switch (sym.n_type) {
+            macho.N_FUN => if (sym.n_sect > 0) {
+                if (sym.n_value == addr) return sym;
+                continue;
+            },
+            else => continue,
+        };
+        if (sym.n_value == addr) return sym;
+    }
+    return null;
 }
 
 fn getString(self: *const ZachO, off: u32) []const u8 {
