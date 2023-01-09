@@ -730,6 +730,8 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                                 inner.encoding,
                             });
                         }
+
+                        pos += @sizeOf(macho.unwind_info_regular_second_level_entry);
                     }
                 },
                 .COMPRESSED => {
