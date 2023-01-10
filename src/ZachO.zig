@@ -286,9 +286,29 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
         return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
     };
 
-    try writer.writeAll("REBASE INFO:\n");
     const rebase_data = self.data[lc.rebase_off..][0..lc.rebase_size];
-    try self.parseAndPrintRebaseInfo(rebase_data, writer);
+    if (rebase_data.len > 0) {
+        try writer.writeAll("REBASE INFO:\n");
+        try self.parseAndPrintRebaseInfo(rebase_data, writer);
+    }
+
+    const bind_data = self.data[lc.bind_off..][0..lc.bind_size];
+    if (bind_data.len > 0) {
+        try writer.writeAll("\nBIND INFO:\n");
+        try self.parseAndPrintBindInfo(bind_data, writer);
+    }
+
+    const weak_bind_data = self.data[lc.weak_bind_off..][0..lc.weak_bind_size];
+    if (weak_bind_data.len > 0) {
+        try writer.writeAll("\nWEAK BIND INFO:\n");
+        try self.parseAndPrintBindInfo(weak_bind_data, writer);
+    }
+
+    const lazy_bind_data = self.data[lc.lazy_bind_off..][0..lc.lazy_bind_size];
+    if (lazy_bind_data.len > 0) {
+        try writer.writeAll("\nLAZY BIND INFO:\n");
+        try self.parseAndPrintBindInfo(lazy_bind_data, writer);
+    }
 }
 
 fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
@@ -334,7 +354,18 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 const end = creader.bytes_read;
 
                 try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
-                try writer.print(fmt_value, .{ std.fmt.fmtSliceHexLower(data[start..end]), "", "offset", seg_offset.? });
+                if (end - start > 1) {
+                    try writer.print("    {x:0<2}..{x:0<2}   {s: <56} {s: >20} ({x})\n", .{
+                        data[start], data[end - 1], "", "offset", seg_offset.?,
+                    });
+                } else {
+                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                        data[start],
+                        "",
+                        "offset",
+                        seg_offset.?,
+                    });
+                }
             },
             macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
                 const ntimes = imm;
@@ -361,6 +392,87 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                     try writer.print(fmt_ptr, .{ addr, ptr });
                 }
                 try writer.writeByte('\n');
+            },
+            else => {},
+        }
+    }
+}
+
+fn parseAndPrintBindInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+    var stream = std.io.fixedBufferStream(data);
+    var creader = std.io.countingReader(stream.reader());
+    const reader = creader.reader();
+
+    var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
+    defer segments.deinit();
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => try segments.append(lc.cast(macho.segment_command_64).?),
+        else => {},
+    };
+
+    const fmt_value = "    {x:0<2}       {s: <50} {s: >20} ({x})\n";
+    const fmt_ptr = "      {x: >8} => {x: <8}\n";
+    _ = fmt_ptr;
+
+    var seg_id: ?u8 = null;
+    var seg_offset: ?u64 = null;
+    while (true) {
+        const byte = reader.readByte() catch break;
+        const opc = byte & macho.BIND_OPCODE_MASK;
+        const imm = byte & macho.BIND_IMMEDIATE_MASK;
+        switch (opc) {
+            macho.BIND_OPCODE_DONE => {
+                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DONE", "", imm });
+                break;
+            },
+            macho.BIND_OPCODE_DO_BIND => {
+                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND", "", imm });
+            },
+            macho.BIND_OPCODE_SET_TYPE_IMM => {
+                const tt = switch (imm) {
+                    macho.BIND_TYPE_POINTER => "BIND_TYPE_POINTER",
+                    macho.BIND_TYPE_TEXT_ABSOLUTE32 => "BIND_TYPE_TEXT_ABSOLUTE32",
+                    macho.BIND_TYPE_TEXT_PCREL32 => "BIND_TYPE_TEXT_PCREL32",
+                    else => "UNKNOWN",
+                };
+                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_TYPE_IMM", tt, imm });
+            },
+            macho.BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
+                seg_id = imm;
+                const start = creader.bytes_read;
+                seg_offset = try std.leb.readULEB128(u64, reader);
+                const end = creader.bytes_read;
+
+                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
+                if (end - start > 1) {
+                    try writer.print("    {x:0<2}..{x:0<2}   {s: <56} {s: >20} ({x})\n", .{
+                        data[start], data[end - 1], "", "offset", seg_offset.?,
+                    });
+                } else {
+                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                        data[start],
+                        "",
+                        "offset",
+                        seg_offset.?,
+                    });
+                }
+            },
+            macho.BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM => {
+                var name_buf = std.ArrayList(u8).init(self.gpa);
+                defer name_buf.deinit();
+                try reader.readUntilDelimiterArrayList(&name_buf, 0, std.math.maxInt(u32));
+                try name_buf.append(0);
+                const name = name_buf.items;
+
+                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM", "flags", imm });
+                try writer.print("    {x:0<2}..{x:0<2}   {s: <51} {s: >20} ({x})\n", .{
+                    name[0],
+                    name[name.len - 1],
+                    name,
+                    "string",
+                    std.fmt.fmtSliceHexLower(name),
+                });
             },
             else => {},
         }
