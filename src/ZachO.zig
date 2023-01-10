@@ -387,7 +387,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                         });
                         continue;
                     }
-                    const ptr_offset = seg.fileoff + seg_offset.?;
+                    const ptr_offset = seg.fileoff + seg_offset.? + count * @sizeOf(u64);
                     const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
                     try writer.print(fmt_ptr, .{ addr, ptr });
                 }
@@ -645,9 +645,14 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         try writer.print("\n  Common encodings: (count = {d})\n", .{common_encodings.len});
 
         for (common_encodings) |raw, i| {
-            if (self.verbose) {
-                const enc = try macho.UnwindEncodingArm64.fromU32(raw);
+            if (self.verbose) blk: {
                 try writer.print("    encoding[{d}]\n", .{i});
+                const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                    error.UnknownEncoding => if (raw == 0) {
+                        try writer.writeAll("          none\n");
+                        break :blk;
+                    } else return err,
+                };
                 try formatCompactUnwindEncodingArm64(enc, writer, .{
                     .prefix = 6,
                 });
