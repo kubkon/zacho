@@ -328,7 +328,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     const fmt_ptr = "      {x: >8} => {x: <8}\n";
 
     var seg_id: ?u8 = null;
-    var seg_offset: ?u64 = null;
+    var offset: u64 = 0;
     while (true) {
         const byte = reader.readByte() catch break;
         const opc = byte & macho.REBASE_OPCODE_MASK;
@@ -350,50 +350,124 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
             macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
                 const start = creader.bytes_read;
-                seg_offset = try std.leb.readULEB128(u64, reader);
+                offset = try std.leb.readULEB128(u64, reader);
                 const end = creader.bytes_read;
 
                 try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
                 if (end - start > 1) {
-                    try writer.print("    {x:0<2}..{x:0<2}   {s: <56} {s: >20} ({x})\n", .{
-                        data[start], data[end - 1], "", "offset", seg_offset.?,
+                    try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
+                        data[start], data[end - 1], "", "offset", offset,
                     });
                 } else {
-                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
-                        data[start],
-                        "",
-                        "offset",
-                        seg_offset.?,
-                    });
+                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{ data[start], "", "offset", offset });
                 }
             },
-            macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
-                const ntimes = imm;
+            macho.REBASE_OPCODE_ADD_ADDR_IMM_SCALED => {
+                offset += imm * @sizeOf(u64);
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm * @sizeOf(u64) });
+            },
+            macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
+                const addend = try std.leb.readULEB128(u64, reader);
+                offset += addend;
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addend", addend });
+            },
+            macho.REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
+                const addend = try std.leb.readULEB128(u64, reader);
 
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_IMM_TIMES", "count", ntimes });
+                // TODO clean up formatting
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addend", addend });
+                try writer.writeAll("\n    ACTIONS:\n");
+
+                const seg = segments.items[seg_id.?];
+                const addr = seg.vmaddr + offset;
+
+                if (addr > seg.vmaddr + seg.vmsize) {
+                    std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
+                        addr,
+                        seg.segName(),
+                        seg_id.?,
+                    });
+                    continue;
+                }
+
+                const ptr_offset = seg.fileoff + offset;
+                const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                try writer.print(fmt_ptr, .{ addr, ptr });
+                try writer.writeByte('\n');
+
+                offset += addend + @sizeOf(u64);
+            },
+            macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES,
+            macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES,
+            macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB,
+            => {
+                var ntimes: u64 = 1;
+                var skip: u64 = 0;
+                switch (opc) {
+                    macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
+                        ntimes = imm;
+                        try writer.print(fmt_value, .{
+                            byte,
+                            "REBASE_OPCODE_DO_REBASE_IMM_TIMES",
+                            "count",
+                            ntimes,
+                        });
+                    },
+                    macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES => {
+                        ntimes = try std.leb.readULEB128(u64, reader);
+                        try writer.print(fmt_value, .{
+                            byte,
+                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
+                            "count",
+                            ntimes,
+                        });
+                    },
+                    macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB => {
+                        ntimes = try std.leb.readULEB128(u64, reader);
+                        const start = creader.bytes_read;
+                        skip = try std.leb.readULEB128(u64, reader);
+                        try writer.print(fmt_value, .{
+                            byte,
+                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
+                            "count",
+                            ntimes,
+                        });
+                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                            data[start],
+                            "",
+                            "skip",
+                            skip,
+                        });
+                    },
+                    else => unreachable,
+                }
                 try writer.writeByte('\n');
                 try writer.writeAll("    ACTIONS:\n");
 
                 const seg = segments.items[seg_id.?];
-                var addr = seg.vmaddr + seg_offset.?;
+                const base_addr = seg.vmaddr;
                 var count: usize = 0;
                 while (count < ntimes) : (count += 1) {
-                    addr += count * @sizeOf(u64);
+                    const addr = base_addr + offset;
                     if (addr > seg.vmaddr + seg.vmsize) {
                         std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
                             addr,
                             seg.segName(),
-                            imm,
+                            seg_id.?,
                         });
                         continue;
                     }
-                    const ptr_offset = seg.fileoff + seg_offset.? + count * @sizeOf(u64);
+                    const ptr_offset = seg.fileoff + offset;
                     const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
                     try writer.print(fmt_ptr, .{ addr, ptr });
+                    offset += skip + @sizeOf(u64);
                 }
                 try writer.writeByte('\n');
             },
-            else => {},
+            else => {
+                std.log.err("unknown opcode: {x}", .{opc});
+                break;
+            },
         }
     }
 }
@@ -466,13 +540,14 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, writer: anytype) !void {
                 const name = name_buf.items;
 
                 try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM", "flags", imm });
-                try writer.print("    {x:0<2}..{x:0<2}   {s: <51} {s: >20} ({x})\n", .{
+                try writer.print("    {x:0<2}..{x:0<2}   {s: <51} {s: >20} ({d})\n", .{
                     name[0],
                     name[name.len - 1],
-                    name,
+                    "",
                     "string",
-                    std.fmt.fmtSliceHexLower(name),
+                    name.len,
                 });
+                try writer.print("\n             {s}\n\n", .{name});
             },
             else => {},
         }
