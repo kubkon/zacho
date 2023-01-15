@@ -369,13 +369,13 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
             macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
                 offset += addend;
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addend", addend });
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
             },
             macho.REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
 
                 // TODO clean up formatting
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addend", addend });
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addr", addend });
                 try writer.writeAll("\n    ACTIONS:\n");
 
                 const seg = segments.items[seg_id.?];
@@ -487,6 +487,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
 
     const fmt_value = "    {x:0<2}       {s: <50} {s: >20} ({x})\n";
     const fmt_ptr = "      {x: >8} => {x: <8}\n";
+    const fmt_ptr_with_addend = "      {x: >8} => {x: <8} with addend {x}\n";
 
     var seg_id: ?u8 = null;
     var dylib_id: ?u16 = null;
@@ -631,7 +632,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 const seg = segments.items[seg_id.?];
                 var i: u64 = 0;
                 while (i < count) : (i += 1) {
-                    const addr = @intCast(u64, @intCast(i64, seg.vmaddr + offset) + addend);
+                    const addr = @intCast(u64, @intCast(i64, seg.vmaddr + offset));
 
                     if (addr > seg.vmaddr + seg.vmsize) {
                         std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
@@ -642,9 +643,13 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                         continue;
                     }
 
-                    const ptr_offset = @intCast(u64, @intCast(i64, seg.fileoff + offset) + addend);
+                    const ptr_offset = @intCast(u64, @intCast(i64, seg.fileoff + offset));
                     const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
-                    try writer.print(fmt_ptr, .{ addr, ptr });
+                    if (addend == 0) {
+                        try writer.print(fmt_ptr, .{ addr, ptr });
+                    } else {
+                        try writer.print(fmt_ptr_with_addend, .{ addr, ptr, addend });
+                    }
 
                     offset += skip + @sizeOf(u64) + add_addr;
                 }
