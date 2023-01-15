@@ -364,7 +364,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
             },
             macho.REBASE_OPCODE_ADD_ADDR_IMM_SCALED => {
                 offset += imm * @sizeOf(u64);
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm * @sizeOf(u64) });
+                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm });
             },
             macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
