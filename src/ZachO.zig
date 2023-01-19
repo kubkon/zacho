@@ -601,7 +601,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                             break;
                         }
                         add_addr = imm * @sizeOf(u64);
-                        try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND", "scale", imm });
+                        try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED", "scale", imm });
                     },
                     macho.BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB => {
                         if (lazy_ops) {
@@ -748,7 +748,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                 assert(rel.len == 1);
                 break :blk self.getUnwindInfoTargetNameAndAddend(rel[0], entry.lsda);
             };
-            const enc = try macho.UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
+            const enc = try UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
             try writer.print("    {s: <22} 0x{x}", .{ "start:", entry.rangeStart });
@@ -831,7 +831,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         for (common_encodings) |raw, i| {
             if (self.verbose) blk: {
                 try writer.print("    encoding[{d}]\n", .{i});
-                const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
                     error.UnknownEncoding => if (raw == 0) {
                         try writer.writeAll("          none\n");
                         break :blk;
@@ -1015,7 +1015,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                             });
                             try writer.writeAll("        Encoding:\n");
 
-                            const enc = macho.UnwindEncodingArm64.fromU32(inner.encoding) catch |err| switch (err) {
+                            const enc = UnwindEncodingArm64.fromU32(inner.encoding) catch |err| switch (err) {
                                 error.UnknownEncoding => if (inner.encoding == 0) {
                                     try writer.writeAll("          none\n");
                                     break :blk;
@@ -1057,7 +1057,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                             if (self.verbose) blk: {
                                 try writer.print("        encoding[{d}]\n", .{count + common_encodings.len});
-                                const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                                const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
                                     error.UnknownEncoding => if (raw == 0) {
                                         try writer.writeAll("          none\n");
                                         break :blk;
@@ -1099,7 +1099,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                             try writer.print("      [{d}] {s}\n", .{ count, func_name });
                             try writer.print("        Function address: 0x{x:0>16}\n", .{seg.vmaddr + func_offset});
 
-                            const enc = macho.UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                            const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
                                 error.UnknownEncoding => if (raw == 0) {
                                     try writer.writeAll("          none\n");
                                     break :blk;
@@ -1127,7 +1127,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
     }
 }
 
-fn formatCompactUnwindEncodingArm64(enc: macho.UnwindEncodingArm64, writer: anytype, comptime opts: struct {
+fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, comptime opts: struct {
     prefix: usize = 0,
 }) !void {
     const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
@@ -2093,3 +2093,97 @@ fn filterRelocsByAddress(
 
     return relocs[start..end];
 }
+
+// TODO add corresponding x86_64 tagged union
+const UnwindEncodingArm64 = union(enum) {
+    frame: Frame,
+    frameless: Frameless,
+    dwarf: Dwarf,
+
+    const Frame = packed struct {
+        x_reg_pairs: packed struct {
+            x19_x20: u1,
+            x21_x22: u1,
+            x23_x24: u1,
+            x25_x26: u1,
+            x27_x28: u1,
+        },
+        d_reg_pairs: packed struct {
+            d8_d9: u1,
+            d10_d11: u1,
+            d12_d13: u1,
+            d14_d15: u1,
+        },
+        unused: u15,
+        mode: Mode = .frame,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    const Frameless = packed struct {
+        unused: u12 = 0,
+        stack_size: u12,
+        mode: Mode = .frameless,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    const Dwarf = packed struct {
+        section_offset: u24,
+        mode: Mode = .dwarf,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    const Mode = enum(u4) {
+        frameless = 0x2,
+        dwarf = 0x3,
+        frame = 0x4,
+        _,
+    };
+
+    const mode_mask: u32 = 0x0F000000;
+
+    fn fromU32(enc: u32) !UnwindEncodingArm64 {
+        const m = (enc & mode_mask) >> 24;
+        return switch (@intToEnum(Mode, m)) {
+            .frame => .{ .frame = @bitCast(Frame, enc) },
+            .frameless => .{ .frameless = @bitCast(Frameless, enc) },
+            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
+            else => return error.UnknownEncoding,
+        };
+    }
+
+    fn toU32(enc: UnwindEncodingArm64) u32 {
+        return switch (enc) {
+            inline else => |x| @bitCast(u32, x),
+        };
+    }
+
+    fn start(enc: UnwindEncodingArm64) bool {
+        return switch (enc) {
+            inline else => |x| x.start == 0b1,
+        };
+    }
+
+    fn hasLsda(enc: UnwindEncodingArm64) bool {
+        return switch (enc) {
+            inline else => |x| x.has_lsda == 0b1,
+        };
+    }
+
+    fn personalityIndex(enc: UnwindEncodingArm64) u2 {
+        return switch (enc) {
+            inline else => |x| x.personality_index,
+        };
+    }
+
+    fn mode(enc: UnwindEncodingArm64) Mode {
+        return switch (enc) {
+            inline else => |x| x.mode,
+        };
+    }
+};
