@@ -13,6 +13,11 @@ const ZigKit = @import("ZigKit");
 const CMSDecoder = ZigKit.Security.CMSDecoder;
 
 gpa: Allocator,
+arch: enum {
+    aarch64,
+    x86_64,
+    unknown,
+},
 header: macho.mach_header_64,
 data: []align(@alignOf(u64)) const u8,
 
@@ -30,6 +35,7 @@ pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
     const data = try file.readToEndAllocOptions(gpa, file_size, file_size, @alignOf(u64), null);
     var self = ZachO{
         .gpa = gpa,
+        .arch = undefined,
         .header = undefined,
         .data = data,
         .verbose = verbose,
@@ -42,6 +48,11 @@ pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
     if (header.magic != macho.MH_MAGIC_64) return error.InvalidMagic;
 
     self.header = header;
+    self.arch = switch (header.cputype) {
+        macho.CPU_TYPE_ARM64 => .aarch64,
+        macho.CPU_TYPE_X86_64 => .x86_64,
+        else => .unknown,
+    };
 
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -748,7 +759,6 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                 assert(rel.len == 1);
                 break :blk self.getUnwindInfoTargetNameAndAddend(rel[0], entry.lsda);
             };
-            const enc = try UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
 
             try writer.print("  Entry at offset 0x{x}:\n", .{i * @sizeOf(macho.compact_unwind_entry)});
             try writer.print("    {s: <22} 0x{x}", .{ "start:", entry.rangeStart });
@@ -759,7 +769,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
             try writer.print("    {s: <22} 0x{x}\n", .{ "length:", entry.rangeLength });
 
             if (!self.verbose) {
-                try writer.print("    {s: <22} 0x{x:0>8}\n", .{ "compact encoding:", enc.toU32() });
+                try writer.print("    {s: <22} 0x{x:0>8}\n", .{ "compact encoding:", entry.compactUnwindEncoding });
             }
 
             if (personality) |x| {
@@ -780,9 +790,22 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
             if (self.verbose) {
                 try writer.print("    {s: <22}\n", .{"compact encoding:"});
-                try formatCompactUnwindEncodingArm64(enc, writer, .{
-                    .prefix = 12,
-                });
+
+                switch (self.arch) {
+                    .aarch64 => {
+                        const enc = try UnwindEncodingArm64.fromU32(entry.compactUnwindEncoding);
+                        try formatCompactUnwindEncodingArm64(enc, writer, .{
+                            .prefix = 12,
+                        });
+                    },
+                    .x86_64 => {
+                        const enc = try UnwindEncodingX86_64.fromU32(entry.compactUnwindEncoding);
+                        try formatCompactUnwindEncodingX86_64(enc, writer, .{
+                            .prefix = 12,
+                        });
+                    },
+                    else => unreachable,
+                }
             }
         }
     } else {
@@ -831,15 +854,31 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         for (common_encodings) |raw, i| {
             if (self.verbose) blk: {
                 try writer.print("    encoding[{d}]\n", .{i});
-                const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
-                    error.UnknownEncoding => if (raw == 0) {
-                        try writer.writeAll("          none\n");
-                        break :blk;
-                    } else return err,
-                };
-                try formatCompactUnwindEncodingArm64(enc, writer, .{
-                    .prefix = 6,
-                });
+                switch (self.arch) {
+                    .aarch64 => {
+                        const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                            error.UnknownEncoding => if (raw == 0) {
+                                try writer.writeAll("          none\n");
+                                break :blk;
+                            } else return err,
+                        };
+                        try formatCompactUnwindEncodingArm64(enc, writer, .{
+                            .prefix = 6,
+                        });
+                    },
+                    .x86_64 => {
+                        const enc = UnwindEncodingX86_64.fromU32(raw) catch |err| switch (err) {
+                            error.UnknownEncoding => if (raw == 0) {
+                                try writer.writeAll("          none\n");
+                                break :blk;
+                            } else return err,
+                        };
+                        try formatCompactUnwindEncodingX86_64(enc, writer, .{
+                            .prefix = 6,
+                        });
+                    },
+                    else => unreachable,
+                }
             } else {
                 try writer.print("    encoding[{d}]: 0x{x:0>8}\n", .{ i, raw });
             }
@@ -1015,15 +1054,31 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                             });
                             try writer.writeAll("        Encoding:\n");
 
-                            const enc = UnwindEncodingArm64.fromU32(inner.encoding) catch |err| switch (err) {
-                                error.UnknownEncoding => if (inner.encoding == 0) {
-                                    try writer.writeAll("          none\n");
-                                    break :blk;
-                                } else return err,
-                            };
-                            try formatCompactUnwindEncodingArm64(enc, writer, .{
-                                .prefix = 10,
-                            });
+                            switch (self.arch) {
+                                .aarch64 => {
+                                    const enc = UnwindEncodingArm64.fromU32(inner.encoding) catch |err| switch (err) {
+                                        error.UnknownEncoding => if (inner.encoding == 0) {
+                                            try writer.writeAll("          none\n");
+                                            break :blk;
+                                        } else return err,
+                                    };
+                                    try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                        .prefix = 10,
+                                    });
+                                },
+                                .x86_64 => {
+                                    const enc = UnwindEncodingX86_64.fromU32(inner.encoding) catch |err| switch (err) {
+                                        error.UnknownEncoding => if (inner.encoding == 0) {
+                                            try writer.writeAll("          none\n");
+                                            break :blk;
+                                        } else return err,
+                                    };
+                                    try formatCompactUnwindEncodingX86_64(enc, writer, .{
+                                        .prefix = 10,
+                                    });
+                                },
+                                else => unreachable,
+                            }
                         } else {
                             try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding=0x{x:0>8}\n", .{
                                 count,
@@ -1057,15 +1112,31 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                             if (self.verbose) blk: {
                                 try writer.print("        encoding[{d}]\n", .{count + common_encodings.len});
-                                const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
-                                    error.UnknownEncoding => if (raw == 0) {
-                                        try writer.writeAll("          none\n");
-                                        break :blk;
-                                    } else return err,
-                                };
-                                try formatCompactUnwindEncodingArm64(enc, writer, .{
-                                    .prefix = 10,
-                                });
+                                switch (self.arch) {
+                                    .aarch64 => {
+                                        const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                                            error.UnknownEncoding => if (raw == 0) {
+                                                try writer.writeAll("          none\n");
+                                                break :blk;
+                                            } else return err,
+                                        };
+                                        try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                            .prefix = 10,
+                                        });
+                                    },
+                                    .x86_64 => {
+                                        const enc = UnwindEncodingX86_64.fromU32(raw) catch |err| switch (err) {
+                                            error.UnknownEncoding => if (raw == 0) {
+                                                try writer.writeAll("          none\n");
+                                                break :blk;
+                                            } else return err,
+                                        };
+                                        try formatCompactUnwindEncodingX86_64(enc, writer, .{
+                                            .prefix = 10,
+                                        });
+                                    },
+                                    else => unreachable,
+                                }
                             } else {
                                 try writer.print("        encoding[{d}]: 0x{x:0>8}\n", .{
                                     count + common_encodings.len,
@@ -1098,17 +1169,34 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                             try writer.print("      [{d}] {s}\n", .{ count, func_name });
                             try writer.print("        Function address: 0x{x:0>16}\n", .{seg.vmaddr + func_offset});
-
-                            const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
-                                error.UnknownEncoding => if (raw == 0) {
-                                    try writer.writeAll("          none\n");
-                                    break :blk;
-                                } else return err,
-                            };
                             try writer.writeAll("        Encoding\n");
-                            try formatCompactUnwindEncodingArm64(enc, writer, .{
-                                .prefix = 10,
-                            });
+
+                            switch (self.arch) {
+                                .aarch64 => {
+                                    const enc = UnwindEncodingArm64.fromU32(raw) catch |err| switch (err) {
+                                        error.UnknownEncoding => if (raw == 0) {
+                                            try writer.writeAll("          none\n");
+                                            break :blk;
+                                        } else return err,
+                                    };
+                                    try formatCompactUnwindEncodingArm64(enc, writer, .{
+                                        .prefix = 10,
+                                    });
+                                },
+
+                                .x86_64 => {
+                                    const enc = UnwindEncodingX86_64.fromU32(raw) catch |err| switch (err) {
+                                        error.UnknownEncoding => if (raw == 0) {
+                                            try writer.writeAll("          none\n");
+                                            break :blk;
+                                        } else return err,
+                                    };
+                                    try formatCompactUnwindEncodingX86_64(enc, writer, .{
+                                        .prefix = 10,
+                                    });
+                                },
+                                else => unreachable,
+                            }
                         } else {
                             try writer.print("      [{d}]: function offset=0x{x:0>8}, encoding[{d}]=0x{x:0>8}\n", .{
                                 count,
@@ -1155,6 +1243,41 @@ fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, c
                 try writer.print(prefix ++ "{s: <12} {}\n", .{
                     field.name,
                     @field(frame.d_reg_pairs, field.name) == 0b1,
+                });
+            }
+        },
+        .dwarf => |dwarf| {
+            try writer.print(prefix ++ "{s: <12} 0x{x:0>8}\n", .{
+                "FDE offset:",
+                dwarf.section_offset,
+            });
+        },
+    }
+}
+
+fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype, comptime opts: struct {
+    prefix: usize = 0,
+}) !void {
+    const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
+    try writer.print(prefix ++ "{s: <12} {}\n", .{ "start:", enc.start() });
+    try writer.print(prefix ++ "{s: <12} {}\n", .{ "LSDA:", enc.hasLsda() });
+    try writer.print(prefix ++ "{s: <12} {d}\n", .{ "personality:", enc.personalityIndex() });
+    try writer.print(prefix ++ "{s: <12} {s}\n", .{ "mode:", @tagName(enc.mode()) });
+
+    switch (enc) {
+        .frameless => |frameless| {
+            inline for (@typeInfo(@TypeOf(frameless)).Struct.fields) |field| {
+                try writer.print(prefix ++ "{s: <12} {x}\n", .{
+                    field.name,
+                    @field(frameless, field.name),
+                });
+            }
+        },
+        .frame => |frame| {
+            inline for (@typeInfo(@TypeOf(frame)).Struct.fields) |field| {
+                try writer.print(prefix ++ "{s: <12} {x}\n", .{
+                    field.name,
+                    @field(frame, field.name),
                 });
             }
         },
@@ -2094,7 +2217,6 @@ fn filterRelocsByAddress(
     return relocs[start..end];
 }
 
-// TODO add corresponding x86_64 tagged union
 const UnwindEncodingArm64 = union(enum) {
     frame: Frame,
     frameless: Frameless,
@@ -2182,6 +2304,91 @@ const UnwindEncodingArm64 = union(enum) {
     }
 
     fn mode(enc: UnwindEncodingArm64) Mode {
+        return switch (enc) {
+            inline else => |x| x.mode,
+        };
+    }
+};
+
+pub const UnwindEncodingX86_64 = union(enum) {
+    frame: Frame,
+    frameless: Frameless,
+    dwarf: Dwarf,
+
+    pub const Frame = packed struct {
+        frame_registers: u15,
+        unused: u1 = 0,
+        frame_offset: u8,
+        mode: Mode = .ebp_frame,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    pub const Frameless = packed struct {
+        stack_reg_permutation: u10,
+        stack_reg_count: u3,
+        stack_adjust: u3,
+        stack_size: u8,
+        mode: Mode,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    pub const Dwarf = packed struct {
+        section_offset: u24,
+        mode: Mode = .dwarf,
+        personality_index: u2,
+        has_lsda: u1,
+        start: u1,
+    };
+
+    pub const Mode = enum(u4) {
+        ebp_frame = 0x1,
+        stack_immd = 0x2,
+        stack_ind = 0x3,
+        dwarf = 0x4,
+        _,
+    };
+
+    pub const mode_mask: u32 = 0x0F000000;
+
+    pub fn fromU32(enc: u32) !UnwindEncodingX86_64 {
+        const m = (enc & mode_mask) >> 24;
+        return switch (@intToEnum(Mode, m)) {
+            .ebp_frame => .{ .frame = @bitCast(Frame, enc) },
+            .stack_immd, .stack_ind => .{ .frameless = @bitCast(Frameless, enc) },
+            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
+            else => return error.UnknownEncoding,
+        };
+    }
+
+    pub fn toU32(enc: UnwindEncodingX86_64) u32 {
+        return switch (enc) {
+            inline else => |x| @bitCast(u32, x),
+        };
+    }
+
+    pub fn start(enc: UnwindEncodingX86_64) bool {
+        return switch (enc) {
+            inline else => |x| x.start == 0b1,
+        };
+    }
+
+    pub fn hasLsda(enc: UnwindEncodingX86_64) bool {
+        return switch (enc) {
+            inline else => |x| x.has_lsda == 0b1,
+        };
+    }
+
+    pub fn personalityIndex(enc: UnwindEncodingX86_64) u2 {
+        return switch (enc) {
+            inline else => |x| x.personality_index,
+        };
+    }
+
+    pub fn mode(enc: UnwindEncodingX86_64) Mode {
         return switch (enc) {
             inline else => |x| x.mode,
         };
