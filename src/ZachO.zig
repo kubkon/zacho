@@ -160,6 +160,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
         switch (lc.cmd()) {
             .SEGMENT_64 => try printSegmentLC(fmt, lc, writer),
             .DYLD_INFO_ONLY => try printDyldInfoOnlyLC(fmt, lc, writer),
+            .UUID => try printUuidLC(fmt, lc, writer),
             else => {},
         }
 
@@ -170,6 +171,13 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printUuidLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.uuid_command).?;
+    var buffer: [64]u8 = undefined;
+    const encoded = std.base64.standard.Encoder.encode(&buffer, &cmd.uuid);
+    try writer.print(f.fmt("s"), .{ "UUID:", encoded });
 }
 
 fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
