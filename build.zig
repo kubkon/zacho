@@ -4,13 +4,16 @@ const Builder = std.build.Builder;
 
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
-    const mode = b.standardReleaseOptions();
+    const mode = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable("zacho", "src/main.zig");
-    exe.addPackagePath("clap", "zig-clap/clap.zig");
-    exe.addPackagePath("ZigKit", "ZigKit/src/main.zig");
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
+    const exe = b.addExecutable(.{
+        .name = "zacho",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = mode,
+    });
+    exe.addAnonymousModule("clap", .{ .source_file = .{ .path = "zig-clap/clap.zig" } });
+    exe.addAnonymousModule("ZigKit", .{ .source_file = .{ .path = "ZigKit/src/main.zig" } });
 
     if (comptime builtin.target.isDarwin()) {
         exe.linkFramework("CoreFoundation");
@@ -28,7 +31,10 @@ pub fn build(b: *Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/ZachO.zig" },
+        .optimize = mode,
+    });
     const test_step = b.step("test", "Run all tests");
-    const tests = b.addTest("src/ZachO.zig");
     test_step.dependOn(&tests.step);
 }
