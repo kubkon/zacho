@@ -747,7 +747,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
 
-        for (entries) |entry, i| {
+        for (entries, 0..) |entry, i| {
             const base_offset = i * @sizeOf(macho.compact_unwind_entry);
             const entry_relocs = filterRelocsByAddress(relocs, base_offset, @sizeOf(macho.compact_unwind_entry));
             const func = blk: {
@@ -859,7 +859,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
         try writer.print("\n  Common encodings: (count = {d})\n", .{common_encodings.len});
 
-        for (common_encodings) |raw, i| {
+        for (common_encodings, 0..) |raw, i| {
             if (self.verbose) blk: {
                 try writer.print("    encoding[{d}]\n", .{i});
                 switch (self.arch) {
@@ -899,7 +899,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
         try writer.print("\n  Personality functions: (count = {d})\n", .{personalities.len});
 
-        for (personalities) |personality, i| {
+        for (personalities, 0..) |personality, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
                 const addr = seg.vmaddr + personality;
@@ -929,7 +929,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         )[0..header.indexCount];
 
         try writer.print("\n  Top level indices: (count = {d})\n", .{indexes.len});
-        for (indexes) |entry, i| {
+        for (indexes, 0..) |entry, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
                 const name = if (self.findSymbolByAddress(seg.vmaddr + entry.functionOffset)) |sym|
@@ -973,7 +973,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         )[0..num_lsdas];
 
         try writer.writeAll("\n  LSDA descriptors:\n");
-        for (lsdas) |lsda, i| {
+        for (lsdas, 0..) |lsda, i| {
             if (self.verbose) {
                 const seg = self.getSegmentByName("__TEXT").?;
                 const func_name = if (self.findSymbolByAddress(seg.vmaddr + lsda.functionOffset)) |sym|
@@ -1005,7 +1005,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         }
 
         try writer.writeAll("\n  Second level indices:\n");
-        for (indexes) |entry, i| {
+        for (indexes, 0..) |entry, i| {
             const start_offset = entry.secondLevelPagesSectionOffset;
             if (start_offset == 0) break;
 
@@ -1840,7 +1840,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
                 gop.value_ptr.appendSliceAssumeCapacity(headers);
             }
 
-            for (sorted_by_address.items) |other_id, i| {
+            for (sorted_by_address.items, 0..) |other_id, i| {
                 const other_seg = segments.items[other_id];
                 if (seg.vmaddr < other_seg.vmaddr) {
                     try sorted_by_address.insert(i, seg_id);
@@ -1848,7 +1848,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
                 }
             } else try sorted_by_address.append(seg_id);
 
-            for (sorted_by_offset.items) |other_id, i| {
+            for (sorted_by_offset.items, 0..) |other_id, i| {
                 const other_seg = segments.items[other_id];
                 if (seg.fileoff < other_seg.fileoff) {
                     try sorted_by_offset.insert(i, seg_id);
@@ -1875,7 +1875,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
 
         if (sections.get(seg_id)) |headers| {
             try writer.writeByte('\n');
-            for (headers.items) |header, header_id| {
+            for (headers.items, 0..) |header, header_id| {
                 try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.addr });
                 try writer.print("    {s: >20} |\n", .{""});
                 try writer.print("    {s: >20} -------- {x}\n", .{ "", header.addr + header.size });
@@ -1914,7 +1914,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
 
         if (sections.get(seg_id)) |headers| {
             try writer.writeByte('\n');
-            for (headers.items) |header, header_id| {
+            for (headers.items, 0..) |header, header_id| {
                 try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.offset });
                 try writer.print("    {s: >20} |\n", .{""});
                 try writer.print("    {s: >20} -------- {x}\n", .{ "", header.offset + header.size });
