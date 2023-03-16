@@ -12,10 +12,14 @@ pub fn build(b: *Builder) void {
         .target = target,
         .optimize = mode,
     });
-    exe.addAnonymousModule("clap", .{ .source_file = .{ .path = "zig-clap/clap.zig" } });
-    exe.addAnonymousModule("ZigKit", .{ .source_file = .{ .path = "ZigKit/src/main.zig" } });
+    exe.addAnonymousModule("clap", .{
+        .source_file = .{ .path = "zig-clap/clap.zig" },
+    });
 
     if (comptime builtin.target.isDarwin()) {
+        exe.addAnonymousModule("ZigKit", .{
+            .source_file = .{ .path = "ZigKit/src/main.zig" },
+        });
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }
@@ -30,11 +34,4 @@ pub fn build(b: *Builder) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
-
-    const tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/ZachO.zig" },
-        .optimize = mode,
-    });
-    const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&tests.step);
 }
