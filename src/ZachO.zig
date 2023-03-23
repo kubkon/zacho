@@ -161,6 +161,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .SEGMENT_64 => try printSegmentLC(fmt, lc, writer),
             .DYLD_INFO_ONLY => try printDyldInfoOnlyLC(fmt, lc, writer),
             .UUID => try printUuidLC(fmt, lc, writer),
+            .RPATH => try printRpathLC(fmt, lc, writer),
             else => {},
         }
 
@@ -171,6 +172,11 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const rpath = lc.getRpathPathName();
+    try writer.print(f.fmt("s"), .{ "Path:", rpath });
 }
 
 fn printUuidLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
