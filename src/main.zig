@@ -33,7 +33,7 @@ pub fn main() !void {
     });
     defer res.deinit();
 
-    if (res.args.help) {
+    if (res.args.help != 0) {
         return printUsageWithHelp(stderr, params[0..]);
     }
 
@@ -45,28 +45,28 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
 
-    var zacho = try ZachO.parse(gpa.allocator(), file, res.args.verbose);
+    var zacho = try ZachO.parse(gpa.allocator(), file, res.args.verbose != 0);
     defer zacho.deinit();
 
-    if (res.args.header) {
+    if (res.args.header != 0) {
         try zacho.printHeader(stdout);
     }
-    if (res.args.@"load-commands") {
+    if (res.args.@"load-commands" != 0) {
         try zacho.printLoadCommands(stdout);
     }
-    if (res.args.@"dyld-info") {
+    if (res.args.@"dyld-info" != 0) {
         try zacho.printDyldInfo(stdout);
     }
-    if (res.args.@"unwind-info") {
+    if (res.args.@"unwind-info" != 0) {
         try zacho.printUnwindInfo(stdout);
     }
-    if (res.args.@"code-signature") {
+    if (res.args.@"code-signature" != 0) {
         try zacho.printCodeSignature(stdout);
     }
-    if (res.args.@"verify-memory-layout") {
+    if (res.args.@"verify-memory-layout" != 0) {
         try zacho.verifyMemoryLayout(stdout);
     }
-    if (res.args.@"symbol-table") {
+    if (res.args.@"symbol-table" != 0) {
         try zacho.printSymbolTable(stdout);
     }
 }
