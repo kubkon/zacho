@@ -17,9 +17,11 @@ pub fn build(b: *Builder) void {
     });
 
     if (comptime builtin.target.isDarwin()) {
-        exe.addAnonymousModule("ZigKit", .{
-            .source_file = .{ .path = "ZigKit/src/main.zig" },
+        const zig_kit = b.dependency("zigkit", .{
+            .target = target,
+            .optimize = mode,
         });
+        exe.addModule("ZigKit", zig_kit.module("ZigKit"));
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }

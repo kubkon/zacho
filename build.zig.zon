@@ -1,0 +1,13 @@
+.{
+    .name = "zacho",
+    .version = "0.0.1",
+
+    .dependencies = .{
+        .zigkit = .{
+            .url = "https://github.com/kubkon/ZigKit/archive/518f979dc840bc845a132d6a27a6257ed6ffd1b0.tar.gz",
+            .hash = "1220adf8ab1e7f7a6992c631822b2c903192d4c7aade17ae0743025fa5b09ffa28e9",
+        },
+    },
+}
+
+
