@@ -597,7 +597,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 }
                 const x = try std.leb.readULEB128(u64, reader);
                 try writer.print(fmt_value, .{ byte, "BIND_OPCODE_ADD_ADDR_ULEB", "addr", x });
-                offset = @intCast(u64, @intCast(i64, offset) + @bitCast(i64, x));
+                offset = @intCast(@as(i64, @intCast(offset)) + @as(i64, @bitCast(x)));
             },
             macho.BIND_OPCODE_DO_BIND,
             macho.BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB,
@@ -657,7 +657,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 const seg = segments.items[seg_id.?];
                 var i: u64 = 0;
                 while (i < count) : (i += 1) {
-                    const addr = @intCast(u64, @intCast(i64, seg.vmaddr + offset));
+                    const addr: u64 = @intCast(@as(i64, @intCast(seg.vmaddr + offset)));
 
                     if (addr > seg.vmaddr + seg.vmsize) {
                         std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
@@ -668,7 +668,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                         continue;
                     }
 
-                    const ptr_offset = @intCast(u64, @intCast(i64, seg.fileoff + offset));
+                    const ptr_offset: u64 = @intCast(@as(i64, @intCast(seg.fileoff + offset)));
                     const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
                     if (addend == 0) {
                         try writer.print(fmt_ptr, .{ addr, ptr });
@@ -696,7 +696,7 @@ const UnwindInfoTargetNameAndAddend = struct {
     fn getName(self: UnwindInfoTargetNameAndAddend, zacho: *const ZachO) []const u8 {
         switch (self.tag) {
             .symbol => return zacho.getString(self.name),
-            .section => return zacho.getSectionByIndex(@intCast(u8, self.name)).sectName(),
+            .section => return zacho.getSectionByIndex(@intCast(self.name)).sectName(),
         }
     }
 };
@@ -721,7 +721,7 @@ fn getUnwindInfoTargetNameAndAddend(
             .addend = code - sym.n_value,
         };
     } else {
-        const sect = self.getSectionByIndex(@intCast(u8, rel.r_symbolnum));
+        const sect = self.getSectionByIndex(@intCast(rel.r_symbolnum));
         return .{
             .tag = .section,
             .name = rel.r_symbolnum,
@@ -748,8 +748,8 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         }
 
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
-        const entries = @ptrCast([*]align(1) const macho.compact_unwind_entry, data)[0..num_entries];
-        const relocs = @ptrCast([*]align(1) const macho.relocation_info, self.data.ptr + sect.reloff)[0..sect.nreloc];
+        const entries = @as([*]align(1) const macho.compact_unwind_entry, @ptrCast(data))[0..num_entries];
+        const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
 
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
 
@@ -829,7 +829,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
         };
 
         const data = self.data[sect.offset..][0..sect.size];
-        const header = @ptrCast(*align(1) const macho.unwind_info_section_header, data.ptr).*;
+        const header = @as(*align(1) const macho.unwind_info_section_header, @ptrCast(data.ptr)).*;
 
         try writer.writeAll("Contents of __TEXT,__unwind_info section:\n");
         try writer.print("  {s: <25} {d}\n", .{ "Version:", header.version });
@@ -858,9 +858,9 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
             header.indexCount,
         });
 
-        const common_encodings = @ptrCast(
+        const common_encodings = @as(
             [*]align(1) const macho.compact_unwind_encoding_t,
-            data.ptr + header.commonEncodingsArraySectionOffset,
+            @ptrCast(data.ptr + header.commonEncodingsArraySectionOffset),
         )[0..header.commonEncodingsArrayCount];
 
         try writer.print("\n  Common encodings: (count = {d})\n", .{common_encodings.len});
@@ -898,9 +898,9 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
             }
         }
 
-        const personalities = @ptrCast(
+        const personalities = @as(
             [*]align(1) const u32,
-            data.ptr + header.personalityArraySectionOffset,
+            @ptrCast(data.ptr + header.personalityArraySectionOffset),
         )[0..header.personalityArrayCount];
 
         try writer.print("\n  Personality functions: (count = {d})\n", .{personalities.len});
@@ -929,9 +929,9 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
             }
         }
 
-        const indexes = @ptrCast(
+        const indexes = @as(
             [*]align(1) const macho.unwind_info_section_header_index_entry,
-            data.ptr + header.indexSectionOffset,
+            @ptrCast(data.ptr + header.indexSectionOffset),
         )[0..header.indexCount];
 
         try writer.print("\n  Top level indices: (count = {d})\n", .{indexes.len});
@@ -973,9 +973,9 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                 indexes[0].lsdaIndexArraySectionOffset,
             @sizeOf(macho.unwind_info_section_header_lsda_index_entry),
         );
-        const lsdas = @ptrCast(
+        const lsdas = @as(
             [*]align(1) const macho.unwind_info_section_header_lsda_index_entry,
-            data.ptr + indexes[0].lsdaIndexArraySectionOffset,
+            @ptrCast(data.ptr + indexes[0].lsdaIndexArraySectionOffset),
         )[0..num_lsdas];
 
         try writer.writeAll("\n  LSDA descriptors:\n");
@@ -1032,24 +1032,24 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                 });
             }
 
-            const kind = @intToEnum(
+            const kind = @as(
                 macho.UNWIND_SECOND_LEVEL,
-                @ptrCast(*align(1) const u32, data.ptr + start_offset).*,
+                @enumFromInt(@as(*align(1) const u32, @ptrCast(data.ptr + start_offset)).*),
             );
 
             switch (kind) {
                 .REGULAR => {
-                    const page_header = @ptrCast(
+                    const page_header = @as(
                         *align(1) const macho.unwind_info_regular_second_level_page_header,
-                        data.ptr + start_offset,
+                        @ptrCast(data.ptr + start_offset),
                     ).*;
 
                     var pos = start_offset + page_header.entryPageOffset;
                     var count: usize = 0;
                     while (count < page_header.entryCount) : (count += 1) {
-                        const inner = @ptrCast(
+                        const inner = @as(
                             *align(1) const macho.unwind_info_regular_second_level_entry,
-                            data.ptr + pos,
+                            @ptrCast(data.ptr + pos),
                         ).*;
 
                         if (self.verbose) blk: {
@@ -1105,9 +1105,9 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                     }
                 },
                 .COMPRESSED => {
-                    const page_header = @ptrCast(
+                    const page_header = @as(
                         *align(1) const macho.unwind_info_compressed_second_level_page_header,
-                        data.ptr + start_offset,
+                        @ptrCast(data.ptr + start_offset),
                     ).*;
 
                     var page_encodings = std.ArrayList(macho.compact_unwind_encoding_t).init(self.gpa);
@@ -1122,7 +1122,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                         var pos = start_offset + page_header.encodingsPageOffset;
                         var count: usize = 0;
                         while (count < page_header.encodingsCount) : (count += 1) {
-                            const raw = @ptrCast(*align(1) const macho.compact_unwind_encoding_t, data.ptr + pos).*;
+                            const raw = @as(*align(1) const macho.compact_unwind_encoding_t, @ptrCast(data.ptr + pos)).*;
 
                             if (self.verbose) blk: {
                                 try writer.print("        encoding[{d}]\n", .{count + common_encodings.len});
@@ -1166,7 +1166,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                     var pos = start_offset + page_header.entryPageOffset;
                     var count: usize = 0;
                     while (count < page_header.entryCount) : (count += 1) {
-                        const inner = @ptrCast(*align(1) const u32, data.ptr + pos).*;
+                        const inner = @as(*align(1) const u32, @ptrCast(data.ptr + pos)).*;
                         const func_offset = entry.functionOffset + (inner & 0xFFFFFF);
                         const id = inner >> 24;
                         const raw = if (id < common_encodings.len)
@@ -1416,13 +1416,13 @@ fn formatCodeSignatureData(
                     },
                 }
 
-                const ident = mem.sliceTo(@ptrCast([*:0]const u8, ptr), 0);
+                const ident = mem.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
                 try writer.print("\nIdent: {s}\n", .{ident});
                 ptr = ptr[ident.len + 1 ..];
 
                 if (team_off > 0) {
                     assert(team_off - ident_off == ident.len + 1);
-                    const team_ident = mem.sliceTo(@ptrCast([*:0]const u8, ptr), 0);
+                    const team_ident = mem.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
                     try writer.print("\nTeam ident: {s}\n", .{team_ident});
                     ptr = ptr[team_ident.len + 1 ..];
                 }
@@ -1431,7 +1431,7 @@ fn formatCodeSignatureData(
                 while (j > 0) : (j -= 1) {
                     const hash = ptr[0..hash_size];
                     try writer.print("\nSpecial slot for {s}:\n", .{
-                        fmtCsSlotConst(@intCast(u32, if (j == 6) macho.CSSLOT_SIGNATURESLOT else j)),
+                        fmtCsSlotConst(@as(u32, @intCast(if (j == 6) macho.CSSLOT_SIGNATURESLOT else j))),
                     });
                     try formatBinaryBlob(hash, .{
                         .prefix = "        ",
@@ -1497,7 +1497,7 @@ fn formatCodeSignatureData(
 
                     while (reader.context.pos < req_blob_len) {
                         const next = try reader.readIntBig(u32);
-                        const op = @intToEnum(ExprOp, next);
+                        const op = @as(ExprOp, @enumFromInt(next));
 
                         try writer.print("  {}", .{op});
 
@@ -1620,8 +1620,8 @@ fn formatCodeSignatureData(
 fn parseReqData(buf: []const u8, reader: anytype) ![]const u8 {
     const len = try reader.readIntBig(u32);
     const pos = try reader.context.getPos();
-    const data = buf[@intCast(usize, pos)..][0..len];
-    try reader.context.seekBy(@intCast(i64, mem.alignForward(len, @sizeOf(u32))));
+    const data = buf[@as(usize, @intCast(pos))..][0..len];
+    try reader.context.seekBy(@as(i64, @intCast(mem.alignForward(u32, len, @sizeOf(u32)))));
     return data;
 }
 
@@ -1651,7 +1651,7 @@ fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
 
     const oid1 = getOid(data, &pos);
     const q1 = @min(@divFloor(oid1, 40), 2);
-    try writer.print("\n      {d}.{d}", .{ q1, oid1 - q1 * 40 });
+    try writer.print("\n      {d}.{d}", .{ q1, oid1 - @as(usize, q1) * 40 });
 
     while (pos < data.len) {
         const oid2 = getOid(data, &pos);
@@ -1668,7 +1668,7 @@ fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: anytype) !void {
 }
 
 fn fmtReqMatch(buf: []const u8, reader: anytype, writer: anytype) !void {
-    const match = @intToEnum(MatchOperation, try reader.readIntBig(u32));
+    const match = @as(MatchOperation, @enumFromInt(try reader.readIntBig(u32)));
     try writer.print("\n    {}", .{match});
     switch (match) {
         .match_exists, .match_absent => {},
@@ -1739,7 +1739,7 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
         const end = if (blob[i..].len >= step) step else blob[i..].len;
         const padding = step - blob[i .. i + end].len;
         if (padding > 0) {
-            mem.set(u8, &tmp_buf, 0);
+            @memset(tmp_buf[0..], 0);
         }
         mem.copy(u8, &tmp_buf, blob[i .. i + end]);
         try writer.print("{s}{x:<016} {x:<016}", .{
@@ -1833,7 +1833,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
             const seg = lc.cast(macho.segment_command_64).?;
-            const seg_id = @intCast(u8, segments.items.len);
+            const seg_id = @as(u8, @intCast(segments.items.len));
             try segments.append(seg);
 
             const headers = lc.getSections();
@@ -2001,13 +2001,13 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
 
             try writer.print(" {s}", .{sym_name});
 
-            const ord = @divTrunc(@bitCast(i16, sym.n_desc), macho.N_SYMBOL_RESOLVER);
+            const ord = @divTrunc(@as(i16, @bitCast(sym.n_desc)), macho.N_SYMBOL_RESOLVER);
             switch (ord) {
                 macho.BIND_SPECIAL_DYLIB_FLAT_LOOKUP => {}, // TODO
                 macho.BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE => {}, // TODO
                 macho.BIND_SPECIAL_DYLIB_SELF => {}, // TODO
                 else => {
-                    const dylib = self.getDylibByIndex(@intCast(u16, ord));
+                    const dylib = self.getDylibByIndex(@as(u16, @intCast(ord)));
                     const full_path = dylib.getDylibPathName();
                     const leaf_path = std.fs.path.basename(full_path);
                     var name = leaf_path;
@@ -2035,7 +2035,7 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
 
 fn getSymtab(self: *const ZachO) []align(1) const macho.nlist_64 {
     const lc = self.symtab_lc orelse return &[0]macho.nlist_64{};
-    const symtab = @ptrCast([*]align(1) const macho.nlist_64, self.data.ptr + lc.symoff)[0..lc.nsyms];
+    const symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
     return symtab;
 }
 
@@ -2058,7 +2058,7 @@ fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
 fn getString(self: *const ZachO, off: u32) []const u8 {
     const strtab = self.data[self.symtab_lc.?.stroff..][0..self.symtab_lc.?.strsize];
     assert(off < strtab.len);
-    return mem.sliceTo(@ptrCast([*:0]const u8, strtab.ptr + off), 0);
+    return mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab.ptr + off)), 0);
 }
 
 fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?macho.section_64 {
@@ -2102,7 +2102,7 @@ fn getSectionByIndex(self: ZachO, index: u8) macho.section_64 {
         .SEGMENT_64 => {
             const sects = lc.getSections();
             if (index > count + sects.len) {
-                count += @intCast(u8, sects.len);
+                count += @as(u8, @intCast(sects.len));
                 continue;
             }
 
@@ -2118,7 +2118,7 @@ fn getSectionByIndex(self: ZachO, index: u8) macho.section_64 {
 fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
     const sect = self.getSectionByName("__DATA_CONST", "__got").?;
     const data = self.data[sect.offset..][0..sect.size];
-    const ptr = @ptrCast(*align(1) const u64, data[index * 8 ..]).*;
+    const ptr = @as(*align(1) const u64, @ptrCast(data[index * 8 ..])).*;
 
     const mask = 0xFFFF000000000000; // TODO I guessed the value of the mask, so verify!
     switch ((mask & ptr) >> 48) {
@@ -2285,17 +2285,17 @@ const UnwindEncodingArm64 = union(enum) {
 
     fn fromU32(enc: u32) !UnwindEncodingArm64 {
         const m = (enc & mode_mask) >> 24;
-        return switch (@intToEnum(Mode, m)) {
-            .frame => .{ .frame = @bitCast(Frame, enc) },
-            .frameless => .{ .frameless = @bitCast(Frameless, enc) },
-            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
+        return switch (@as(Mode, @enumFromInt(m))) {
+            .frame => .{ .frame = @as(Frame, @bitCast(enc)) },
+            .frameless => .{ .frameless = @as(Frameless, @bitCast(enc)) },
+            .dwarf => .{ .dwarf = @as(Dwarf, @bitCast(enc)) },
             else => return error.UnknownEncoding,
         };
     }
 
     fn toU32(enc: UnwindEncodingArm64) u32 {
         return switch (enc) {
-            inline else => |x| @bitCast(u32, x),
+            inline else => |x| @as(u32, @bitCast(x)),
         };
     }
 
@@ -2370,17 +2370,17 @@ pub const UnwindEncodingX86_64 = union(enum) {
 
     pub fn fromU32(enc: u32) !UnwindEncodingX86_64 {
         const m = (enc & mode_mask) >> 24;
-        return switch (@intToEnum(Mode, m)) {
-            .ebp_frame => .{ .frame = @bitCast(Frame, enc) },
-            .stack_immd, .stack_ind => .{ .frameless = @bitCast(Frameless, enc) },
-            .dwarf => .{ .dwarf = @bitCast(Dwarf, enc) },
+        return switch (@as(Mode, @enumFromInt(m))) {
+            .ebp_frame => .{ .frame = @as(Frame, @bitCast(enc)) },
+            .stack_immd, .stack_ind => .{ .frameless = @as(Frameless, @bitCast(enc)) },
+            .dwarf => .{ .dwarf = @as(Dwarf, @bitCast(enc)) },
             else => return error.UnknownEncoding,
         };
     }
 
     pub fn toU32(enc: UnwindEncodingX86_64) u32 {
         return switch (enc) {
-            inline else => |x| @bitCast(u32, x),
+            inline else => |x| @as(u32, @bitCast(x)),
         };
     }
 
