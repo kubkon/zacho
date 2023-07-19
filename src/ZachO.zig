@@ -1054,7 +1054,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
                         if (self.verbose) blk: {
                             const seg = self.getSegmentByName("__TEXT").?;
-                            const func_name = if (self.findSymbolByAddress(seg.vmaddr + entry.functionOffset)) |sym|
+                            const func_name = if (self.findSymbolByAddress(seg.vmaddr + inner.functionOffset)) |sym|
                                 self.getString(sym.n_strx)
                             else
                                 "unknown";
@@ -1064,7 +1064,7 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
                                 func_name,
                             });
                             try writer.print("        Function address: 0x{x:0>16}\n", .{
-                                seg.vmaddr + entry.functionOffset,
+                                seg.vmaddr + inner.functionOffset,
                             });
                             try writer.writeAll("        Encoding:\n");
 
