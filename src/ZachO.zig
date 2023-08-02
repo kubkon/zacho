@@ -21,13 +21,19 @@ arch: enum {
 header: macho.mach_header_64,
 data: []align(@alignOf(u64)) const u8,
 
+symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
+strtab: []const u8 = &[0]u8{},
+source_symtab_lookup: std.ArrayListUnmanaged(u32) = .{},
 symtab_lc: ?macho.symtab_command = null,
+
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 
 verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
+    self.source_symtab_lookup.deinit(self.gpa);
+    self.symtab.deinit(self.gpa);
 }
 
 pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
@@ -60,6 +66,29 @@ pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
         else => {},
     };
+
+    if (self.symtab_lc) |lc| {
+        const symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
+        try self.symtab.resize(self.gpa, symtab.len);
+        self.strtab = self.data[lc.stroff..][0..lc.strsize];
+
+        try self.source_symtab_lookup.ensureTotalCapacityPrecise(self.gpa, symtab.len);
+
+        var sorted_all_syms = try std.ArrayList(SymbolAtIndex).initCapacity(self.gpa, symtab.len);
+        defer sorted_all_syms.deinit();
+
+        for (symtab, 0..) |_, index| {
+            sorted_all_syms.appendAssumeCapacity(.{ .index = @as(u32, @intCast(index)) });
+        }
+
+        mem.sort(SymbolAtIndex, sorted_all_syms.items, self, SymbolAtIndex.lessThan);
+
+        for (sorted_all_syms.items, 0..) |sym_id, i| {
+            const sym = sym_id.getSymbol(self);
+            self.symtab.items[i] = sym;
+            self.source_symtab_lookup.appendAssumeCapacity(sym_id.index);
+        }
+    }
 
     return self;
 }
@@ -707,7 +736,7 @@ fn getUnwindInfoTargetNameAndAddend(
     code: u64,
 ) UnwindInfoTargetNameAndAddend {
     if (rel.r_extern == 1) {
-        const sym = self.getSymtab()[rel.r_symbolnum];
+        const sym = self.symtab.items[rel.r_symbolnum];
         return .{
             .tag = .symbol,
             .name = sym.n_strx,
@@ -1957,7 +1986,7 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
 
     try writer.writeAll("\nSymbol table:\n");
 
-    for (self.getSymtab()) |sym| {
+    for (self.symtab.items) |sym| {
         if (sym.stab()) continue; // TODO
 
         const sym_name = self.getString(sym.n_strx);
@@ -2033,15 +2062,14 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     };
 }
 
-fn getSymtab(self: *const ZachO) []align(1) const macho.nlist_64 {
+fn getSourceSymtab(self: *const ZachO) []align(1) const macho.nlist_64 {
     const lc = self.symtab_lc orelse return &[0]macho.nlist_64{};
     const symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
     return symtab;
 }
 
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
-    const symtab = self.getSymtab();
-    for (symtab) |sym| {
+    for (self.symtab.items) |sym| {
         if (sym.undf() or sym.tentative()) continue;
         if (sym.stab()) switch (sym.n_type) {
             macho.N_FUN => if (sym.n_sect > 0) {
@@ -2056,9 +2084,8 @@ fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
 }
 
 fn getString(self: *const ZachO, off: u32) []const u8 {
-    const strtab = self.data[self.symtab_lc.?.stroff..][0..self.symtab_lc.?.strsize];
-    assert(off < strtab.len);
-    return mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab.ptr + off)), 0);
+    assert(off < self.strtab.len);
+    return mem.sliceTo(@as([*:0]const u8, @ptrCast(self.strtab.ptr + off)), 0);
 }
 
 fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?macho.section_64 {
@@ -2406,5 +2433,61 @@ pub const UnwindEncodingX86_64 = union(enum) {
         return switch (enc) {
             inline else => |x| x.mode,
         };
+    }
+};
+
+const SymbolAtIndex = struct {
+    index: u32,
+
+    const Context = ZachO;
+
+    fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
+        return ctx.getSourceSymtab()[self.index];
+    }
+
+    fn getSymbolName(self: SymbolAtIndex, ctx: Context) []const u8 {
+        const off = self.getSymbol(ctx).n_strx;
+        return ctx.getString(off);
+    }
+
+    fn getSymbolSeniority(self: SymbolAtIndex, ctx: Context) u2 {
+        const sym = self.getSymbol(ctx);
+        if (!sym.ext()) {
+            const sym_name = self.getSymbolName(ctx);
+            if (mem.startsWith(u8, sym_name, "l") or mem.startsWith(u8, sym_name, "L")) return 3;
+            return 2;
+        }
+        if (sym.weakDef() or sym.pext()) return 1;
+        return 0;
+    }
+
+    /// Performs lexicographic-like check.
+    /// * lhs and rhs defined
+    ///   * if lhs == rhs
+    ///     * if lhs.n_sect == rhs.n_sect
+    ///       * ext < weak < local < temp
+    ///     * lhs.n_sect < rhs.n_sect
+    ///   * lhs < rhs
+    /// * !rhs is undefined
+    fn lessThan(ctx: Context, lhs_index: SymbolAtIndex, rhs_index: SymbolAtIndex) bool {
+        const lhs = lhs_index.getSymbol(ctx);
+        const rhs = rhs_index.getSymbol(ctx);
+        if (lhs.sect() and rhs.sect()) {
+            if (lhs.n_value == rhs.n_value) {
+                if (lhs.n_sect == rhs.n_sect) {
+                    const lhs_senior = lhs_index.getSymbolSeniority(ctx);
+                    const rhs_senior = rhs_index.getSymbolSeniority(ctx);
+                    if (lhs_senior == rhs_senior) {
+                        return lessThanByNStrx(ctx, lhs_index, rhs_index);
+                    } else return lhs_senior < rhs_senior;
+                } else return lhs.n_sect < rhs.n_sect;
+            } else return lhs.n_value < rhs.n_value;
+        } else if (lhs.undf() and rhs.undf()) {
+            return lessThanByNStrx(ctx, lhs_index, rhs_index);
+        } else return rhs.undf();
+    }
+
+    fn lessThanByNStrx(ctx: Context, lhs: SymbolAtIndex, rhs: SymbolAtIndex) bool {
+        return lhs.getSymbol(ctx).n_strx < rhs.getSymbol(ctx).n_strx;
     }
 };
