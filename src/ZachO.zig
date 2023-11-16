@@ -19,7 +19,7 @@ arch: enum {
     unknown,
 },
 header: macho.mach_header_64,
-data: []align(@alignOf(u64)) const u8,
+data: []const u8,
 
 symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
 strtab: []const u8 = &[0]u8{},
@@ -36,9 +36,7 @@ pub fn deinit(self: *ZachO) void {
     self.symtab.deinit(self.gpa);
 }
 
-pub fn parse(gpa: Allocator, file: fs.File, verbose: bool) !ZachO {
-    const file_size = try file.getEndPos();
-    const data = try file.readToEndAllocOptions(gpa, file_size, file_size, @alignOf(u64), null);
+pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     var self = ZachO{
         .gpa = gpa,
         .arch = undefined,
@@ -445,7 +443,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 }
 
                 const ptr_offset = seg.fileoff + offset;
-                const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
                 try writer.print(fmt_ptr, .{ addr, ptr });
                 try writer.writeByte('\n');
 
@@ -512,7 +510,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                         continue;
                     }
                     const ptr_offset = seg.fileoff + offset;
-                    const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                    const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
                     try writer.print(fmt_ptr, .{ addr, ptr });
                     offset += skip + @sizeOf(u64);
                 }
@@ -698,7 +696,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                     }
 
                     const ptr_offset: u64 = @intCast(@as(i64, @intCast(seg.fileoff + offset)));
-                    const ptr = mem.readIntLittle(u64, self.data[ptr_offset..][0..@sizeOf(u64)]);
+                    const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
                     if (addend == 0) {
                         try writer.print(fmt_ptr, .{ addr, ptr });
                     } else {
@@ -1357,9 +1355,9 @@ fn formatCodeSignatureData(
 
     var data = self.data[start_pos..end_pos];
     var ptr = data;
-    const magic = mem.readIntBig(u32, ptr[0..4]);
-    const length = mem.readIntBig(u32, ptr[4..8]);
-    const count = mem.readIntBig(u32, ptr[8..12]);
+    const magic = mem.readInt(u32, ptr[0..4], .big);
+    const length = mem.readInt(u32, ptr[4..8], .big);
+    const count = mem.readInt(u32, ptr[8..12], .big);
     ptr = ptr[12..];
 
     try writer.print("{{\n", .{});
@@ -1380,8 +1378,8 @@ fn formatCodeSignatureData(
 
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const tt = mem.readIntBig(u32, ptr[0..4]);
-        const offset = mem.readIntBig(u32, ptr[4..8]);
+        const tt = mem.readInt(u32, ptr[0..4], .big);
+        const offset = mem.readInt(u32, ptr[4..8], .big);
         try writer.print("{{\n    Type: {s}(0x{x})\n    Offset: {}\n}}\n", .{ fmtCsSlotConst(tt), tt, offset });
         blobs.appendAssumeCapacity(.{
             .type = tt,
@@ -1392,8 +1390,8 @@ fn formatCodeSignatureData(
 
     for (blobs.items) |blob| {
         ptr = data[blob.offset..];
-        const magic2 = mem.readIntBig(u32, ptr[0..4]);
-        const length2 = mem.readIntBig(u32, ptr[4..8]);
+        const magic2 = mem.readInt(u32, ptr[0..4], .big);
+        const length2 = mem.readInt(u32, ptr[4..8], .big);
 
         try writer.print("{{\n", .{});
         try writer.print("    Magic: {s}(0x{x})\n", .{ fmtCsMagic(magic2), magic2 });
@@ -1401,16 +1399,16 @@ fn formatCodeSignatureData(
 
         switch (magic2) {
             macho.CSMAGIC_CODEDIRECTORY => {
-                const version = mem.readIntBig(u32, ptr[8..12]);
-                const flags = mem.readIntBig(u32, ptr[12..16]);
-                const hash_off = mem.readIntBig(u32, ptr[16..20]);
-                const ident_off = mem.readIntBig(u32, ptr[20..24]);
-                const n_special_slots = mem.readIntBig(u32, ptr[24..28]);
-                const n_code_slots = mem.readIntBig(u32, ptr[28..32]);
-                const code_limit = mem.readIntBig(u32, ptr[32..36]);
+                const version = mem.readInt(u32, ptr[8..12], .big);
+                const flags = mem.readInt(u32, ptr[12..16], .big);
+                const hash_off = mem.readInt(u32, ptr[16..20], .big);
+                const ident_off = mem.readInt(u32, ptr[20..24], .big);
+                const n_special_slots = mem.readInt(u32, ptr[24..28], .big);
+                const n_code_slots = mem.readInt(u32, ptr[28..32], .big);
+                const code_limit = mem.readInt(u32, ptr[32..36], .big);
                 const hash_size = ptr[36];
                 const page_size = std.math.pow(u16, 2, ptr[39]);
-                const team_off = mem.readIntBig(u32, ptr[48..52]);
+                const team_off = mem.readInt(u32, ptr[48..52], .big);
 
                 try writer.print("    Version: 0x{x}\n", .{version});
                 try writer.print("    Flags: 0x{x}\n", .{flags});
@@ -1423,21 +1421,21 @@ fn formatCodeSignatureData(
                 try writer.print("    Hash type: {}\n", .{ptr[37]});
                 try writer.print("    Platform: {}\n", .{ptr[38]});
                 try writer.print("    Page size: {}\n", .{ptr[39]});
-                try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, ptr[40..44])});
+                try writer.print("    Reserved: {}\n", .{mem.readInt(u32, ptr[40..44], .big)});
 
                 switch (version) {
                     0x20400 => {
-                        try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, ptr[44..48])});
+                        try writer.print("    Scatter offset: {}\n", .{mem.readInt(u32, ptr[44..48], .big)});
                         try writer.print("    Team offset: {}\n", .{team_off});
-                        try writer.print("    Reserved: {}\n", .{mem.readIntBig(u32, ptr[52..56])});
-                        try writer.print("    Code limit 64: {}\n", .{mem.readIntBig(u64, ptr[56..64])});
-                        try writer.print("    Offset of executable segment: {}\n", .{mem.readIntBig(u64, ptr[64..72])});
-                        try writer.print("    Limit of executable segment: {}\n", .{mem.readIntBig(u64, ptr[72..80])});
-                        try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readIntBig(u64, ptr[80..88])});
+                        try writer.print("    Reserved: {}\n", .{mem.readInt(u32, ptr[52..56], .big)});
+                        try writer.print("    Code limit 64: {}\n", .{mem.readInt(u64, ptr[56..64], .big)});
+                        try writer.print("    Offset of executable segment: {}\n", .{mem.readInt(u64, ptr[64..72], .big)});
+                        try writer.print("    Limit of executable segment: {}\n", .{mem.readInt(u64, ptr[72..80], .big)});
+                        try writer.print("    Executable segment flags: 0x{x}\n", .{mem.readInt(u64, ptr[80..88], .big)});
                         ptr = ptr[88..];
                     },
                     0x20100 => {
-                        try writer.print("    Scatter offset: {}\n", .{mem.readIntBig(u32, ptr[52..56])});
+                        try writer.print("    Scatter offset: {}\n", .{mem.readInt(u32, ptr[52..56], .big)});
                         ptr = ptr[56..];
                     },
                     else => {
@@ -1491,7 +1489,7 @@ fn formatCodeSignatureData(
 
                 try writer.print("    Parsed data:\n", .{});
 
-                var req_count = try reader.readIntBig(u32);
+                var req_count = try reader.readInt(u32, .big);
 
                 var req_blobs = std.ArrayList(macho.BlobIndex).init(self.gpa);
                 defer req_blobs.deinit();
@@ -1499,8 +1497,8 @@ fn formatCodeSignatureData(
 
                 var next_req: usize = 0;
                 while (next_req < req_count) : (next_req += 1) {
-                    const tt = try reader.readIntBig(u32);
-                    const off = try reader.readIntBig(u32);
+                    const tt = try reader.readInt(u32, .big);
+                    const off = try reader.readInt(u32, .big);
                     try writer.print("\n    {{\n      Type: {s}(0x{x})\n      Offset: {}\n    }}\n", .{
                         fmtCsSlotConst(tt),
                         tt,
@@ -1514,8 +1512,8 @@ fn formatCodeSignatureData(
 
                 for (req_blobs.items) |req_blob| {
                     try stream.seekTo(req_blob.offset - 8);
-                    const req_blob_magic = try reader.readIntBig(u32);
-                    const req_blob_len = try reader.readIntBig(u32);
+                    const req_blob_magic = try reader.readInt(u32, .big);
+                    const req_blob_len = try reader.readInt(u32, .big);
 
                     try writer.writeAll("\n    {\n");
                     try writer.print("        Magic: {s}(0x{x})\n", .{
@@ -1525,7 +1523,7 @@ fn formatCodeSignatureData(
                     try writer.print("        Length: {}\n", .{req_blob_len});
 
                     while (reader.context.pos < req_blob_len) {
-                        const next = try reader.readIntBig(u32);
+                        const next = try reader.readInt(u32, .big);
                         const op = @as(ExprOp, @enumFromInt(next));
 
                         try writer.print("  {}", .{op});
@@ -1552,7 +1550,7 @@ fn formatCodeSignatureData(
                             => {},
                             .op_ident => try fmtReqData(req_data, reader, writer),
                             .op_cert_generic => {
-                                const slot = try reader.readIntBig(i32);
+                                const slot = try reader.readInt(i32, .big);
                                 switch (slot) {
                                     LEAF_CERT => try writer.writeAll("\n    leaf"),
                                     ROOT_CERT => try writer.writeAll("\n    root"),
@@ -1562,7 +1560,7 @@ fn formatCodeSignatureData(
                                 try fmtReqMatch(req_data, reader, writer);
                             },
                             .op_cert_field => {
-                                const slot = try reader.readIntBig(i32);
+                                const slot = try reader.readInt(i32, .big);
                                 switch (slot) {
                                     LEAF_CERT => try writer.writeAll("\n    leaf"),
                                     ROOT_CERT => try writer.writeAll("\n    root"),
@@ -1572,7 +1570,7 @@ fn formatCodeSignatureData(
                                 try fmtReqMatch(req_data, reader, writer);
                             },
                             .op_platform => {
-                                const platform = try reader.readIntBig(i32);
+                                const platform = try reader.readInt(i32, .big);
                                 try writer.print("\n    {x}", .{
                                     std.fmt.fmtSliceHexLower(mem.asBytes(&platform)),
                                 });
@@ -1607,7 +1605,7 @@ fn formatCodeSignatureData(
                     const cd: []const u8 = blk: {
                         const cd_blob = blobs.items[0];
                         const cd_header = data[cd_blob.offset..][0..8];
-                        const cd_length = mem.readIntBig(u32, cd_header[4..8]);
+                        const cd_length = mem.readInt(u32, cd_header[4..8], .big);
                         break :blk data[cd_blob.offset..][0..cd_length];
                     };
 
@@ -1647,7 +1645,7 @@ fn formatCodeSignatureData(
 }
 
 fn parseReqData(buf: []const u8, reader: anytype) ![]const u8 {
-    const len = try reader.readIntBig(u32);
+    const len = try reader.readInt(u32, .big);
     const pos = try reader.context.getPos();
     const data = buf[@as(usize, @intCast(pos))..][0..len];
     try reader.context.seekBy(@as(i64, @intCast(mem.alignForward(u32, len, @sizeOf(u32)))));
@@ -1692,12 +1690,12 @@ fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
 
 fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: anytype) !void {
     _ = buf;
-    const ts = try reader.readIntBig(i64);
+    const ts = try reader.readInt(i64, .big);
     try writer.print("\n      {d}", .{ts});
 }
 
 fn fmtReqMatch(buf: []const u8, reader: anytype, writer: anytype) !void {
-    const match = @as(MatchOperation, @enumFromInt(try reader.readIntBig(u32)));
+    const match = @as(MatchOperation, @enumFromInt(try reader.readInt(u32, .big)));
     try writer.print("\n    {}", .{match});
     switch (match) {
         .match_exists, .match_absent => {},

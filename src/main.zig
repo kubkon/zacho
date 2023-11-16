@@ -42,10 +42,11 @@ pub fn main() !void {
     }
 
     const filename = res.positionals[0];
-    const file = try std.fs.cwd().openFile(filename, .{});
+    const file = try std.fs.cwd().openFile(filename, .{ .mode = .read_write });
     defer file.close();
+    const data = try file.readToEndAlloc(gpa.allocator(), std.math.maxInt(u32));
 
-    var zacho = try ZachO.parse(gpa.allocator(), file, res.args.verbose != 0);
+    var zacho = try ZachO.parse(gpa.allocator(), data, res.args.verbose != 0);
     defer zacho.deinit();
 
     if (res.args.header != 0) {
