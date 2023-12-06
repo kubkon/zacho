@@ -12,9 +12,6 @@ pub fn build(b: *Builder) void {
         .target = target,
         .optimize = mode,
     });
-    exe.addAnonymousModule("clap", .{
-        .source_file = .{ .path = "zig-clap/clap.zig" },
-    });
 
     if (comptime builtin.target.isDarwin()) {
         const zig_kit = b.dependency("zigkit", .{

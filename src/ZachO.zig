@@ -1489,7 +1489,7 @@ fn formatCodeSignatureData(
 
                 try writer.print("    Parsed data:\n", .{});
 
-                var req_count = try reader.readInt(u32, .big);
+                const req_count = try reader.readInt(u32, .big);
 
                 var req_blobs = std.ArrayList(macho.BlobIndex).init(self.gpa);
                 defer req_blobs.deinit();
@@ -1768,7 +1768,7 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
         if (padding > 0) {
             @memset(tmp_buf[0..], 0);
         }
-        mem.copy(u8, &tmp_buf, blob[i .. i + end]);
+        @memcpy(&tmp_buf, blob[i .. i + end]);
         try writer.print("{s}{x:<016} {x:<016}", .{
             pp, std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]), std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
         });
@@ -1870,7 +1870,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
                     gop.value_ptr.* = std.ArrayList(macho.section_64).init(self.gpa);
                 }
                 try gop.value_ptr.ensureUnusedCapacity(headers.len);
-                gop.value_ptr.appendSliceAssumeCapacity(headers);
+                gop.value_ptr.appendUnalignedSliceAssumeCapacity(headers);
             }
 
             for (sorted_by_address.items, 0..) |other_id, i| {
