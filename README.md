@@ -11,33 +11,18 @@ refuse to load your hand-crafter binary, or you just like looking at Mach-O diss
 ## Usage
 
 ```
-zacho [-cdhlsuv] [--help] [--verify-memory-layout] <FILE>
-        --help
-            Display this help and exit.
+Usage: zacho [options] file
 
-    -c, --code-signature
-            Print the contents of code signature (if any).
-
-    -d, --dyld-info
-            Print the contents of dyld rebase and bind opcodes.
-
-    -h, --header
-            Print the Mach-O header.
-
-    -l, --load-commands
-            Print load commands.
-
-    -s, --symbol-table
-            Print the symbol table.
-
-    -u, --unwind-info
-            Print the contents of (compact) unwind info section (if any).
-
-    -v, --verbose
-            Print more detailed info for each flag (if available).
-
-        --verify-memory-layout
-            Print virtual memory layout and verify there is no overlap.
+General options:
+-c, --code-signature        Print the contents of code signature (if any)
+-d, --dyld-info             Print the contents of dyld rebase and bind opcodes
+-h, --header                Print the Mach-O header
+-l, --load-commands         Print load commands
+-s, --symbol-table          Print the symbol table
+-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
+-v, --verbose               Print more detailed info for each flag
+--verify-memory-layout      Print virtual memory layout and verify there is no overlap
+--help                      Display this help and exit
 ```
 
 Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
@@ -49,6 +34,6 @@ I should point here out that I'm basing the flags on `otool` so if you're famili
 Building from source requires [Zig nightly](https://ziglang.org/download/).
 
 ```
-$ git clone https://github.com/kubkon/zacho.git --recursive
+$ git clone https://github.com/kubkon/zacho.git
 $ zig build
 ```
