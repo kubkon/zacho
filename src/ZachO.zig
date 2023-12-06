@@ -730,51 +730,91 @@ pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
 
-    try parseTrieNode(arena.allocator(), 0, data, "", writer);
+    var it = TrieIterator{ .data = data };
+    try parseTrieNode(arena.allocator(), &it, "", self.verbose, writer);
 }
 
-fn parseTrieNode(arena: Allocator, offset: u64, data: []const u8, prefix: []const u8, writer: anytype) !void {
-    if (data.len < offset) return writer.print("fatal: encoded node offset exceeds data length: {d} < {d}\n", .{
-        data.len,
-        offset,
-    });
+const TrieIterator = struct {
+    data: []const u8,
+    pos: usize = 0,
 
-    try writer.writeAll("\n");
-
-    const buf = data[offset..];
-
-    var nread: usize = 0;
-    nread += try getLebSize(buf);
-    const length = try readLeb(buf[0..nread]);
-    // Skip for now
-    nread += length;
-    const nedges = buf[nread];
-    nread += 1;
-    try writer.print("nedges: {d}\n", .{nedges});
-
-    for (0..nedges) |_| {
-        const label = mem.sliceTo(@as([*:0]const u8, @ptrCast(buf.ptr + nread)), 0);
-        nread += label.len + 1;
-        const prefix_label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, label });
-        const leb_size = try getLebSize(buf[nread..]);
-        const off = try readLeb(buf[nread..][0..leb_size]);
-        nread += leb_size;
-        try writer.print(" => {s}@{x}\n", .{ label, off });
-        try parseTrieNode(arena, off, data, prefix_label, writer);
+    fn getStream(it: *TrieIterator) std.io.FixedBufferStream([]const u8) {
+        return std.io.fixedBufferStream(it.data[it.pos..]);
     }
-}
 
-fn getLebSize(data: []const u8) !usize {
-    var stream = std.io.fixedBufferStream(data);
-    var creader = std.io.countingReader(stream.reader());
-    const reader = creader.reader();
-    _ = try std.leb.readULEB128(u64, reader);
-    return creader.bytes_read;
-}
+    fn readULEB128(it: *TrieIterator) !u64 {
+        var stream = it.getStream();
+        var creader = std.io.countingReader(stream.reader());
+        const reader = creader.reader();
+        const value = try std.leb.readULEB128(u64, reader);
+        it.pos += creader.bytes_read;
+        return value;
+    }
 
-fn readLeb(data: []const u8) !u64 {
-    var stream = std.io.fixedBufferStream(data);
-    return std.leb.readULEB128(u64, stream.reader());
+    fn readString(it: *TrieIterator) ![:0]const u8 {
+        var stream = it.getStream();
+        const reader = stream.reader();
+
+        var count: usize = 0;
+        while (true) : (count += 1) {
+            const byte = try reader.readByte();
+            if (byte == 0) break;
+        }
+
+        const str = @as([*:0]const u8, @ptrCast(it.data.ptr + it.pos))[0..count :0];
+        it.pos += count + 1;
+        return str;
+    }
+
+    fn readByte(it: *TrieIterator) !u8 {
+        var stream = it.getStream();
+        const value = try stream.reader().readByte();
+        it.pos += 1;
+        return value;
+    }
+};
+
+fn parseTrieNode(arena: Allocator, it: *TrieIterator, prefix: []const u8, verbose: bool, writer: anytype) !void {
+    const start = it.pos;
+    const size = try it.readULEB128();
+    if (verbose) try writer.print("0x{x:0>8}  size: {d}\n", .{ start, size });
+    if (size > 0) {
+        const flags = try it.readULEB128();
+        if (verbose) try writer.print("{s: >12}flags: 0x{x}\n", .{ "", flags });
+        switch (flags) {
+            macho.EXPORT_SYMBOL_FLAGS_REEXPORT => {
+                @panic("TODO");
+            },
+            macho.EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER => {
+                @panic("TODO");
+            },
+            else => {
+                const vmoff = try it.readULEB128();
+                if (verbose) try writer.print("{s: >12}vmoffset: 0x{x}\n", .{ "", vmoff });
+            },
+        }
+    }
+    const nedges = try it.readByte();
+    if (verbose) try writer.print("{s: >12}nedges: {d}\n", .{ "", nedges });
+
+    var edges: [256]struct { off: u64, label: [:0]const u8 } = undefined;
+
+    for (0..nedges) |i| {
+        const label = try it.readString();
+        const off = try it.readULEB128();
+        if (verbose) try writer.print("{s: >12}label: {s}\n", .{ "", label });
+        if (verbose) try writer.print("{s: >12}next: 0x{x}\n", .{ "", off });
+        edges[i] = .{ .off = off, .label = label };
+    }
+
+    for (edges[0..nedges]) |edge| {
+        const prefix_label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, edge.label });
+        const curr = it.pos;
+        it.pos = edge.off;
+        if (verbose) try writer.writeByte('\n');
+        try parseTrieNode(arena, it, prefix_label, verbose, writer);
+        it.pos = curr;
+    }
 }
 
 const UnwindInfoTargetNameAndAddend = struct {
