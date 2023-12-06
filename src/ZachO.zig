@@ -730,8 +730,31 @@ pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(self.gpa);
     defer arena.deinit();
 
+    var exports = std.ArrayList(Export).init(self.gpa);
+    defer exports.deinit();
+
     var it = TrieIterator{ .data = data };
-    try parseTrieNode(arena.allocator(), &it, "", self.verbose, writer);
+    try parseTrieNode(arena.allocator(), &it, "", &exports, self.verbose, writer);
+
+    const seg = self.getSegmentByName("__TEXT").?;
+
+    for (exports.items) |exp| {
+        switch (exp.tag) {
+            .@"export" => {
+                const info = exp.data.@"export";
+                switch (info.kind) {
+                    .regular => {},
+                    .absolute => try writer.writeAll("[ABS] "),
+                    .tlv => try writer.writeAll("[THREAD_LOCAL] "),
+                }
+                if (info.weak) try writer.writeAll("[WEAK] ");
+                try writer.print("0x{x} ", .{seg.vmaddr + info.vmoffset});
+            },
+            else => {}, // TODO
+        }
+
+        try writer.print("{s}\n", .{exp.name});
+    }
 }
 
 const TrieIterator = struct {
@@ -774,7 +797,31 @@ const TrieIterator = struct {
     }
 };
 
-fn parseTrieNode(arena: Allocator, it: *TrieIterator, prefix: []const u8, verbose: bool, writer: anytype) !void {
+const Export = struct {
+    name: []const u8,
+    tag: enum { @"export", reexport, stub_resolver },
+    data: union {
+        @"export": struct {
+            kind: enum { regular, absolute, tlv },
+            weak: bool = false,
+            vmoffset: u64,
+        },
+        reexport: u64,
+        stub_resolver: struct {
+            stub_offset: u64,
+            resolver_offset: u64,
+        },
+    },
+};
+
+fn parseTrieNode(
+    arena: Allocator,
+    it: *TrieIterator,
+    prefix: []const u8,
+    exports: *std.ArrayList(Export),
+    verbose: bool,
+    writer: anytype,
+) !void {
     const start = it.pos;
     const size = try it.readULEB128();
     if (verbose) try writer.print("0x{x:0>8}  size: {d}\n", .{ start, size });
@@ -783,14 +830,51 @@ fn parseTrieNode(arena: Allocator, it: *TrieIterator, prefix: []const u8, verbos
         if (verbose) try writer.print("{s: >12}flags: 0x{x}\n", .{ "", flags });
         switch (flags) {
             macho.EXPORT_SYMBOL_FLAGS_REEXPORT => {
-                @panic("TODO");
+                const ord = try it.readULEB128();
+                const name = try arena.dupe(u8, try it.readString());
+                if (verbose) {
+                    try writer.print("{s: >12}ordinal: {d}\n", .{ "", ord });
+                    try writer.print("{s: >12}install_name: {s}\n", .{ "", name });
+                }
+                try exports.append(.{
+                    .name = if (name.len > 0) name else prefix,
+                    .tag = .reexport,
+                    .data = .{ .reexport = ord },
+                });
             },
             macho.EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER => {
-                @panic("TODO");
+                const stub_offset = try it.readULEB128();
+                const resolver_offset = try it.readULEB128();
+                if (verbose) {
+                    try writer.print("{s: >12}stub_offset: 0x{x}\n", .{ "", stub_offset });
+                    try writer.print("{s: >12}resolver_offset: 0x{x}\n", .{ "", resolver_offset });
+                }
+                try exports.append(.{
+                    .name = prefix,
+                    .tag = .stub_resolver,
+                    .data = .{ .stub_resolver = .{
+                        .stub_offset = stub_offset,
+                        .resolver_offset = resolver_offset,
+                    } },
+                });
             },
             else => {
                 const vmoff = try it.readULEB128();
                 if (verbose) try writer.print("{s: >12}vmoffset: 0x{x}\n", .{ "", vmoff });
+                try exports.append(.{
+                    .name = prefix,
+                    .tag = .@"export",
+                    .data = .{ .@"export" = .{
+                        .kind = switch (flags & macho.EXPORT_SYMBOL_FLAGS_KIND_MASK) {
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_REGULAR => .regular,
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE => .absolute,
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL => .tlv,
+                            else => unreachable,
+                        },
+                        .weak = flags & macho.EXPORT_SYMBOL_FLAGS_KIND_WEAK_DEFINITION != 0,
+                        .vmoffset = vmoff,
+                    } },
+                });
             },
         }
     }
@@ -812,7 +896,7 @@ fn parseTrieNode(arena: Allocator, it: *TrieIterator, prefix: []const u8, verbos
         const curr = it.pos;
         it.pos = edge.off;
         if (verbose) try writer.writeByte('\n');
-        try parseTrieNode(arena, it, prefix_label, verbose, writer);
+        try parseTrieNode(arena, it, prefix_label, exports, verbose, writer);
         it.pos = curr;
     }
 }
