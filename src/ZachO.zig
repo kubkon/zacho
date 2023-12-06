@@ -27,6 +27,7 @@ source_symtab_lookup: std.ArrayListUnmanaged(u32) = .{},
 symtab_lc: ?macho.symtab_command = null,
 
 dyld_info_only_lc: ?macho.dyld_info_command = null,
+dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
 
 verbose: bool,
 
@@ -62,6 +63,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     while (it.next()) |lc| switch (lc.cmd()) {
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
+        .DYLD_EXPORTS_TRIE => self.dyld_exports_trie_lc = lc.cast(macho.linkedit_data_command).?,
         else => {},
     };
 
@@ -712,6 +714,198 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 break;
             },
         }
+    }
+}
+
+pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
+    const maybe_data = if (self.dyld_info_only_lc) |lc|
+        self.data[lc.export_off..][0..lc.export_size]
+    else if (self.dyld_exports_trie_lc) |lc|
+        self.data[lc.dataoff..][0..lc.datasize]
+    else
+        null;
+    const data = maybe_data orelse
+        return writer.print("LC_DYLD_INFO_ONLY or LC_DYLD_EXPORTS_TRIE load command not found\n", .{});
+
+    var arena = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena.deinit();
+
+    var exports = std.ArrayList(Export).init(self.gpa);
+    defer exports.deinit();
+
+    var it = TrieIterator{ .data = data };
+    try parseTrieNode(arena.allocator(), &it, "", &exports, self.verbose, writer);
+
+    const seg = self.getSegmentByName("__TEXT").?;
+
+    if (self.verbose) try writer.writeByte('\n');
+    try writer.writeAll("Exports:\n");
+    for (exports.items) |exp| {
+        switch (exp.tag) {
+            .@"export" => {
+                const info = exp.data.@"export";
+                if (info.kind != .regular or info.weak) {
+                    try writer.writeByte('[');
+                }
+                switch (info.kind) {
+                    .regular => {},
+                    .absolute => try writer.writeAll("ABS, "),
+                    .tlv => try writer.writeAll("THREAD_LOCAL, "),
+                }
+                if (info.weak) try writer.writeAll("WEAK");
+                if (info.kind != .regular or info.weak) {
+                    try writer.writeAll("] ");
+                }
+                try writer.print("0x{x} ", .{seg.vmaddr + info.vmoffset});
+            },
+            else => {}, // TODO
+        }
+
+        try writer.print("{s}\n", .{exp.name});
+    }
+}
+
+const TrieIterator = struct {
+    data: []const u8,
+    pos: usize = 0,
+
+    fn getStream(it: *TrieIterator) std.io.FixedBufferStream([]const u8) {
+        return std.io.fixedBufferStream(it.data[it.pos..]);
+    }
+
+    fn readULEB128(it: *TrieIterator) !u64 {
+        var stream = it.getStream();
+        var creader = std.io.countingReader(stream.reader());
+        const reader = creader.reader();
+        const value = try std.leb.readULEB128(u64, reader);
+        it.pos += creader.bytes_read;
+        return value;
+    }
+
+    fn readString(it: *TrieIterator) ![:0]const u8 {
+        var stream = it.getStream();
+        const reader = stream.reader();
+
+        var count: usize = 0;
+        while (true) : (count += 1) {
+            const byte = try reader.readByte();
+            if (byte == 0) break;
+        }
+
+        const str = @as([*:0]const u8, @ptrCast(it.data.ptr + it.pos))[0..count :0];
+        it.pos += count + 1;
+        return str;
+    }
+
+    fn readByte(it: *TrieIterator) !u8 {
+        var stream = it.getStream();
+        const value = try stream.reader().readByte();
+        it.pos += 1;
+        return value;
+    }
+};
+
+const Export = struct {
+    name: []const u8,
+    tag: enum { @"export", reexport, stub_resolver },
+    data: union {
+        @"export": struct {
+            kind: enum { regular, absolute, tlv },
+            weak: bool = false,
+            vmoffset: u64,
+        },
+        reexport: u64,
+        stub_resolver: struct {
+            stub_offset: u64,
+            resolver_offset: u64,
+        },
+    },
+};
+
+fn parseTrieNode(
+    arena: Allocator,
+    it: *TrieIterator,
+    prefix: []const u8,
+    exports: *std.ArrayList(Export),
+    verbose: bool,
+    writer: anytype,
+) !void {
+    const start = it.pos;
+    const size = try it.readULEB128();
+    if (verbose) try writer.print("0x{x:0>8}  size: {d}\n", .{ start, size });
+    if (size > 0) {
+        const flags = try it.readULEB128();
+        if (verbose) try writer.print("{s: >12}flags: 0x{x}\n", .{ "", flags });
+        switch (flags) {
+            macho.EXPORT_SYMBOL_FLAGS_REEXPORT => {
+                const ord = try it.readULEB128();
+                const name = try arena.dupe(u8, try it.readString());
+                if (verbose) {
+                    try writer.print("{s: >12}ordinal: {d}\n", .{ "", ord });
+                    try writer.print("{s: >12}install_name: {s}\n", .{ "", name });
+                }
+                try exports.append(.{
+                    .name = if (name.len > 0) name else prefix,
+                    .tag = .reexport,
+                    .data = .{ .reexport = ord },
+                });
+            },
+            macho.EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER => {
+                const stub_offset = try it.readULEB128();
+                const resolver_offset = try it.readULEB128();
+                if (verbose) {
+                    try writer.print("{s: >12}stub_offset: 0x{x}\n", .{ "", stub_offset });
+                    try writer.print("{s: >12}resolver_offset: 0x{x}\n", .{ "", resolver_offset });
+                }
+                try exports.append(.{
+                    .name = prefix,
+                    .tag = .stub_resolver,
+                    .data = .{ .stub_resolver = .{
+                        .stub_offset = stub_offset,
+                        .resolver_offset = resolver_offset,
+                    } },
+                });
+            },
+            else => {
+                const vmoff = try it.readULEB128();
+                if (verbose) try writer.print("{s: >12}vmoffset: 0x{x}\n", .{ "", vmoff });
+                try exports.append(.{
+                    .name = prefix,
+                    .tag = .@"export",
+                    .data = .{ .@"export" = .{
+                        .kind = switch (flags & macho.EXPORT_SYMBOL_FLAGS_KIND_MASK) {
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_REGULAR => .regular,
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE => .absolute,
+                            macho.EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL => .tlv,
+                            else => unreachable,
+                        },
+                        .weak = flags & macho.EXPORT_SYMBOL_FLAGS_KIND_WEAK_DEFINITION != 0,
+                        .vmoffset = vmoff,
+                    } },
+                });
+            },
+        }
+    }
+    const nedges = try it.readByte();
+    if (verbose) try writer.print("{s: >12}nedges: {d}\n", .{ "", nedges });
+
+    var edges: [256]struct { off: u64, label: [:0]const u8 } = undefined;
+
+    for (0..nedges) |i| {
+        const label = try it.readString();
+        const off = try it.readULEB128();
+        if (verbose) try writer.print("{s: >12}label: {s}\n", .{ "", label });
+        if (verbose) try writer.print("{s: >12}next: 0x{x}\n", .{ "", off });
+        edges[i] = .{ .off = off, .label = label };
+    }
+
+    for (edges[0..nedges]) |edge| {
+        const prefix_label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, edge.label });
+        const curr = it.pos;
+        it.pos = edge.off;
+        if (verbose) try writer.writeByte('\n');
+        try parseTrieNode(arena, it, prefix_label, exports, verbose, writer);
+        it.pos = curr;
     }
 }
 
