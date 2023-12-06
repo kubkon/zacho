@@ -738,16 +738,24 @@ pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
 
     const seg = self.getSegmentByName("__TEXT").?;
 
+    if (self.verbose) try writer.writeByte('\n');
+    try writer.writeAll("Exports:\n");
     for (exports.items) |exp| {
         switch (exp.tag) {
             .@"export" => {
                 const info = exp.data.@"export";
+                if (info.kind != .regular or info.weak) {
+                    try writer.writeByte('[');
+                }
                 switch (info.kind) {
                     .regular => {},
-                    .absolute => try writer.writeAll("[ABS] "),
-                    .tlv => try writer.writeAll("[THREAD_LOCAL] "),
+                    .absolute => try writer.writeAll("ABS, "),
+                    .tlv => try writer.writeAll("THREAD_LOCAL, "),
                 }
-                if (info.weak) try writer.writeAll("[WEAK] ");
+                if (info.weak) try writer.writeAll("WEAK");
+                if (info.kind != .regular or info.weak) {
+                    try writer.writeAll("] ");
+                }
                 try writer.print("0x{x} ", .{seg.vmaddr + info.vmoffset});
             },
             else => {}, // TODO
