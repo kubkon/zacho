@@ -27,6 +27,7 @@ source_symtab_lookup: std.ArrayListUnmanaged(u32) = .{},
 symtab_lc: ?macho.symtab_command = null,
 
 dyld_info_only_lc: ?macho.dyld_info_command = null,
+dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
 
 verbose: bool,
 
@@ -62,6 +63,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     while (it.next()) |lc| switch (lc.cmd()) {
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
+        .DYLD_EXPORTS_TRIE => self.dyld_exports_trie_lc = lc.cast(macho.linkedit_data_command).?,
         else => {},
     };
 
@@ -713,6 +715,66 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
             },
         }
     }
+}
+
+pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
+    const maybe_data = if (self.dyld_info_only_lc) |lc|
+        self.data[lc.export_off..][0..lc.export_size]
+    else if (self.dyld_exports_trie_lc) |lc|
+        self.data[lc.dataoff..][0..lc.datasize]
+    else
+        null;
+    const data = maybe_data orelse
+        return writer.print("LC_DYLD_INFO_ONLY or LC_DYLD_EXPORTS_TRIE load command not found\n", .{});
+
+    var arena = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena.deinit();
+
+    try parseTrieNode(arena.allocator(), 0, data, "", writer);
+}
+
+fn parseTrieNode(arena: Allocator, offset: u64, data: []const u8, prefix: []const u8, writer: anytype) !void {
+    if (data.len < offset) return writer.print("fatal: encoded node offset exceeds data length: {d} < {d}\n", .{
+        data.len,
+        offset,
+    });
+
+    try writer.writeAll("\n");
+
+    const buf = data[offset..];
+
+    var nread: usize = 0;
+    nread += try getLebSize(buf);
+    const length = try readLeb(buf[0..nread]);
+    // Skip for now
+    nread += length;
+    const nedges = buf[nread];
+    nread += 1;
+    try writer.print("nedges: {d}\n", .{nedges});
+
+    for (0..nedges) |_| {
+        const label = mem.sliceTo(@as([*:0]const u8, @ptrCast(buf.ptr + nread)), 0);
+        nread += label.len + 1;
+        const prefix_label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, label });
+        const leb_size = try getLebSize(buf[nread..]);
+        const off = try readLeb(buf[nread..][0..leb_size]);
+        nread += leb_size;
+        try writer.print(" => {s}@{x}\n", .{ label, off });
+        try parseTrieNode(arena, off, data, prefix_label, writer);
+    }
+}
+
+fn getLebSize(data: []const u8) !usize {
+    var stream = std.io.fixedBufferStream(data);
+    var creader = std.io.countingReader(stream.reader());
+    const reader = creader.reader();
+    _ = try std.leb.readULEB128(u64, reader);
+    return creader.bytes_read;
+}
+
+fn readLeb(data: []const u8) !u64 {
+    var stream = std.io.fixedBufferStream(data);
+    return std.leb.readULEB128(u64, stream.reader());
 }
 
 const UnwindInfoTargetNameAndAddend = struct {
