@@ -16,6 +16,7 @@ Usage: zacho [options] file
 General options:
 -c, --code-signature        Print the contents of code signature (if any)
 -d, --dyld-info             Print the contents of dyld rebase and bind opcodes
+-e, --exports-trie          Print export trie (if any)
 -h, --header                Print the Mach-O header
 -l, --load-commands         Print load commands
 -s, --symbol-table          Print the symbol table
