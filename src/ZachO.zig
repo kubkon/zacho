@@ -736,6 +736,8 @@ pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
     var it = TrieIterator{ .data = data };
     try parseTrieNode(arena.allocator(), &it, "", &exports, self.verbose, writer);
 
+    mem.sort(Export, exports.items, {}, Export.lessThan);
+
     const seg = self.getSegmentByName("__TEXT").?;
 
     if (self.verbose) try writer.writeByte('\n');
@@ -820,6 +822,26 @@ const Export = struct {
             resolver_offset: u64,
         },
     },
+
+    inline fn rankByTag(self: Export) u3 {
+        return switch (self.tag) {
+            .@"export" => 1,
+            .reexport => 2,
+            .stub_resolver => 3,
+        };
+    }
+
+    fn lessThan(ctx: void, lhs: Export, rhs: Export) bool {
+        _ = ctx;
+        if (lhs.rankByTag() == rhs.rankByTag()) {
+            return switch (lhs.tag) {
+                .@"export" => lhs.data.@"export".vmoffset < rhs.data.@"export".vmoffset,
+                .reexport => lhs.data.reexport < rhs.data.reexport,
+                .stub_resolver => lhs.data.stub_resolver.stub_offset < rhs.data.stub_resolver.stub_offset,
+            };
+        }
+        return lhs.rankByTag() < rhs.rankByTag();
+    }
 };
 
 fn parseTrieNode(
