@@ -879,7 +879,7 @@ fn parseTrieNode(
                             macho.EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL => .tlv,
                             else => unreachable,
                         },
-                        .weak = flags & macho.EXPORT_SYMBOL_FLAGS_KIND_WEAK_DEFINITION != 0,
+                        .weak = flags & macho.EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION != 0,
                         .vmoffset = vmoff,
                     } },
                 });
@@ -2191,14 +2191,16 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
                 sect.sectName(),
             });
 
-            if (sym.n_desc & macho.REFERENCED_DYNAMICALLY != 0) {
-                try writer.writeAll(" [referenced dynamically]");
-            }
+            if (sym.n_desc & macho.REFERENCED_DYNAMICALLY != 0) try writer.writeAll(" [referenced dynamically]");
+            if (sym.weakDef()) try writer.writeAll(" weak");
+            if (sym.weakRef()) try writer.writeAll(" weak-ref");
 
             if (sym.ext()) {
+                if (sym.pext()) try writer.writeAll(" private");
                 try writer.writeAll(" external");
             } else {
                 try writer.writeAll(" non-external");
+                if (sym.pext()) try writer.writeAll(" (was private external)");
             }
 
             try writer.print(" {s}\n", .{sym_name});
@@ -2216,9 +2218,8 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
         } else {
             try writer.print("    {s: >16} (undefined)", .{" "});
 
-            if (sym.ext()) {
-                try writer.writeAll(" external");
-            }
+            if (sym.weakRef()) try writer.writeAll(" weak-ref");
+            if (sym.ext()) try writer.writeAll(" external");
 
             try writer.print(" {s}", .{sym_name});
 
