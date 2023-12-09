@@ -343,29 +343,39 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     const rebase_data = self.data[lc.rebase_off..][0..lc.rebase_size];
     if (rebase_data.len > 0) {
         try writer.writeAll("REBASE INFO:\n");
-        try self.parseAndPrintRebaseInfo(rebase_data, writer);
+        try self.printRebaseInfo(rebase_data, writer);
     }
 
     const bind_data = self.data[lc.bind_off..][0..lc.bind_size];
     if (bind_data.len > 0) {
         try writer.writeAll("\nBIND INFO:\n");
-        try self.parseAndPrintBindInfo(bind_data, false, writer);
+        try self.printBindInfo(bind_data, false, writer);
     }
 
     const weak_bind_data = self.data[lc.weak_bind_off..][0..lc.weak_bind_size];
     if (weak_bind_data.len > 0) {
         try writer.writeAll("\nWEAK BIND INFO:\n");
-        try self.parseAndPrintBindInfo(weak_bind_data, false, writer);
+        try self.printBindInfo(weak_bind_data, false, writer);
     }
 
     const lazy_bind_data = self.data[lc.lazy_bind_off..][0..lc.lazy_bind_size];
     if (lazy_bind_data.len > 0) {
         try writer.writeAll("\nLAZY BIND INFO:\n");
-        try self.parseAndPrintBindInfo(lazy_bind_data, true, writer);
+        try self.printBindInfo(lazy_bind_data, true, writer);
     }
 }
 
-fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+fn printRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+    var rebases = std.ArrayList(u64).init(self.gpa);
+    defer rebases.deinit();
+    try self.parseRebaseInfo(data, &rebases, writer);
+    mem.sort(u64, rebases.items, {}, std.sort.asc(u64));
+    for (rebases.items) |addr| {
+        try writer.print("0x{x}\n", .{addr});
+    }
+}
+
+fn parseRebaseInfo(self: ZachO, data: []const u8, rebases: *std.ArrayList(u64), writer: anytype) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -379,7 +389,6 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     };
 
     const fmt_value = "    {x: <8} {s: <50} {s: >20} ({x})\n";
-    const fmt_ptr = "      {x: >8} => {x: <8}\n";
 
     var seg_id: ?u8 = null;
     var offset: u64 = 0;
@@ -389,17 +398,21 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
         const imm = byte & macho.REBASE_IMMEDIATE_MASK;
         switch (opc) {
             macho.REBASE_OPCODE_DONE => {
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                }
                 break;
             },
             macho.REBASE_OPCODE_SET_TYPE_IMM => {
-                const tt = switch (imm) {
-                    macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
-                    macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
-                    macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
-                    else => "UNKNOWN",
-                };
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+                if (self.verbose) {
+                    const tt = switch (imm) {
+                        macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
+                        macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
+                        macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
+                        else => "UNKNOWN",
+                    };
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+                }
             },
             macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
@@ -407,34 +420,40 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 offset = try std.leb.readULEB128(u64, reader);
                 const end = creader.bytes_read;
 
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
-                if (end - start > 1) {
-                    try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
-                        data[start], data[end - 1], "", "offset", offset,
-                    });
-                } else {
-                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{ data[start], "", "offset", offset });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
+                    if (end - start > 1) {
+                        try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
+                            data[start], data[end - 1], "", "offset", offset,
+                        });
+                    } else {
+                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{ data[start], "", "offset", offset });
+                    }
                 }
             },
             macho.REBASE_OPCODE_ADD_ADDR_IMM_SCALED => {
                 offset += imm * @sizeOf(u64);
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm });
+                }
             },
             macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
                 offset += addend;
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
+                }
             },
             macho.REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
 
-                // TODO clean up formatting
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addr", addend });
-                try writer.writeAll("\n    ACTIONS:\n");
+                if (self.verbose) {
+                    // TODO clean up formatting
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addr", addend });
+                }
 
                 const seg = segments.items[seg_id.?];
                 const addr = seg.vmaddr + offset;
-
                 if (addr > seg.vmaddr + seg.vmsize) {
                     std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
                         addr,
@@ -443,12 +462,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                     });
                     continue;
                 }
-
-                const ptr_offset = seg.fileoff + offset;
-                const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
-                try writer.print(fmt_ptr, .{ addr, ptr });
-                try writer.writeByte('\n');
-
+                try rebases.append(addr);
                 offset += addend + @sizeOf(u64);
             },
             macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES,
@@ -460,44 +474,47 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 switch (opc) {
                     macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
                         ntimes = imm;
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_IMM_TIMES",
-                            "count",
-                            ntimes,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_IMM_TIMES",
+                                "count",
+                                ntimes,
+                            });
+                        }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES => {
                         ntimes = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
-                            "count",
-                            ntimes,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
+                                "count",
+                                ntimes,
+                            });
+                        }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB => {
                         ntimes = try std.leb.readULEB128(u64, reader);
                         const start = creader.bytes_read;
                         skip = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB",
-                            "count",
-                            ntimes,
-                        });
-                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
-                            data[start],
-                            "",
-                            "skip",
-                            skip,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB",
+                                "count",
+                                ntimes,
+                            });
+                            try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                                data[start],
+                                "",
+                                "skip",
+                                skip,
+                            });
+                        }
                     },
                     else => unreachable,
                 }
-                try writer.writeByte('\n');
-                try writer.writeAll("    ACTIONS:\n");
-
                 const seg = segments.items[seg_id.?];
                 const base_addr = seg.vmaddr;
                 var count: usize = 0;
@@ -511,12 +528,9 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                         });
                         continue;
                     }
-                    const ptr_offset = seg.fileoff + offset;
-                    const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
-                    try writer.print(fmt_ptr, .{ addr, ptr });
+                    try rebases.append(addr);
                     offset += skip + @sizeOf(u64);
                 }
-                try writer.writeByte('\n');
             },
             else => {
                 std.log.err("unknown opcode: {x}", .{opc});
@@ -526,7 +540,40 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
-fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: anytype) !void {
+fn printBindInfo(self: ZachO, data: []const u8, is_lazy: bool, writer: anytype) !void {
+    var bindings = std.ArrayList(Binding).init(self.gpa);
+    defer bindings.deinit();
+    try self.parseBindInfo(data, &bindings, is_lazy, writer);
+    mem.sort(Binding, bindings.items, {}, Binding.lessThan);
+    for (bindings.items) |binding| {
+        try writer.print("0x{x} [addend: {d}]", .{ binding.address, binding.addend });
+        if (binding.ordinal) |ord| {
+            const dylib_name = self.getDylibNameByIndex(ord);
+            try writer.print(" ({s})", .{dylib_name});
+        }
+        try writer.print(" {s}\n", .{binding.name});
+    }
+}
+
+const Binding = struct {
+    address: u64,
+    addend: i64,
+    ordinal: ?u16,
+    name: []const u8,
+
+    fn lessThan(ctx: void, lhs: Binding, rhs: Binding) bool {
+        _ = ctx;
+        return lhs.address < rhs.address;
+    }
+};
+
+fn parseBindInfo(
+    self: ZachO,
+    data: []const u8,
+    bindings: *std.ArrayList(Binding),
+    lazy_ops: bool,
+    writer: anytype,
+) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -540,20 +587,24 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
     };
 
     const fmt_value = "    {x:0<2}       {s: <50} {s: >20} ({x})\n";
-    const fmt_ptr = "      {x: >8} => {x: <8}\n";
-    const fmt_ptr_with_addend = "      {x: >8} => {x: <8} with addend {x}\n";
 
     var seg_id: ?u8 = null;
     var dylib_id: ?u16 = null;
     var offset: u64 = 0;
     var addend: i64 = 0;
+
+    var name_buf = std.ArrayList(u8).init(self.gpa);
+    defer name_buf.deinit();
+
     while (true) {
         const byte = reader.readByte() catch break;
         const opc = byte & macho.BIND_OPCODE_MASK;
         const imm = byte & macho.BIND_IMMEDIATE_MASK;
         switch (opc) {
             macho.BIND_OPCODE_DONE => {
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DONE", "", imm });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DONE", "", imm });
+                }
                 if (!lazy_ops) {
                     break;
                 }
@@ -563,20 +614,29 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                     std.log.err("invalid opcode: BIND_OPCODE_SET_TYPE_IMM ({x})", .{opc});
                     break;
                 }
-                const tt = switch (imm) {
-                    macho.BIND_TYPE_POINTER => "BIND_TYPE_POINTER",
-                    macho.BIND_TYPE_TEXT_ABSOLUTE32 => "BIND_TYPE_TEXT_ABSOLUTE32",
-                    macho.BIND_TYPE_TEXT_PCREL32 => "BIND_TYPE_TEXT_PCREL32",
-                    else => "UNKNOWN",
-                };
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_TYPE_IMM", tt, imm });
+                if (self.verbose) {
+                    const tt = switch (imm) {
+                        macho.BIND_TYPE_POINTER => "BIND_TYPE_POINTER",
+                        macho.BIND_TYPE_TEXT_ABSOLUTE32 => "BIND_TYPE_TEXT_ABSOLUTE32",
+                        macho.BIND_TYPE_TEXT_PCREL32 => "BIND_TYPE_TEXT_PCREL32",
+                        else => "UNKNOWN",
+                    };
+                    try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_TYPE_IMM", tt, imm });
+                }
             },
             macho.BIND_OPCODE_SET_DYLIB_ORDINAL_IMM => {
                 dylib_id = imm;
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_DYLIB_ORDINAL_IMM", "", dylib_id.? });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{
+                        byte,
+                        "BIND_OPCODE_SET_DYLIB_ORDINAL_IMM",
+                        "",
+                        dylib_id.?,
+                    });
 
-                const dylib_name = self.getDylibNameByIndex(dylib_id.?);
-                try writer.print("             '{s}'\n", .{dylib_name});
+                    const dylib_name = self.getDylibNameByIndex(dylib_id.?);
+                    try writer.print("             '{s}'\n", .{dylib_name});
+                }
             },
             macho.BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
@@ -584,40 +644,59 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 offset = try std.leb.readULEB128(u64, reader);
                 const end = creader.bytes_read;
 
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
-                if (end - start > 1) {
-                    try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
-                        data[start], data[end - 1], "", "offset", offset,
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{
+                        byte,
+                        "BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB",
+                        "segment",
+                        seg_id.?,
                     });
-                } else {
-                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
-                        data[start],
-                        "",
-                        "offset",
-                        offset,
-                    });
+                    if (end - start > 1) {
+                        try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
+                            data[start], data[end - 1], "", "offset", offset,
+                        });
+                    } else {
+                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                            data[start],
+                            "",
+                            "offset",
+                            offset,
+                        });
+                    }
                 }
             },
             macho.BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM => {
-                var name_buf = std.ArrayList(u8).init(self.gpa);
-                defer name_buf.deinit();
+                name_buf.clearRetainingCapacity();
                 try reader.readUntilDelimiterArrayList(&name_buf, 0, std.math.maxInt(u32));
                 try name_buf.append(0);
-                const name = name_buf.items;
-
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM", "flags", imm });
-                try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({d})\n", .{
-                    name[0],
-                    name[name.len - 1],
-                    "",
-                    "string",
-                    name.len,
-                });
-                try writer.print("             '{s}'\n", .{name});
+                if (self.verbose) {
+                    const name = name_buf.items;
+                    try writer.print(fmt_value, .{
+                        byte,
+                        "BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM",
+                        "flags",
+                        imm,
+                    });
+                    try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({d})\n", .{
+                        name[0],
+                        name[name.len - 1],
+                        "",
+                        "string",
+                        name.len,
+                    });
+                    try writer.print("             '{s}'\n", .{name});
+                }
             },
             macho.BIND_OPCODE_SET_ADDEND_SLEB => {
                 addend = try std.leb.readILEB128(i64, reader);
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_SET_ADDEND_SLEB", "addend", addend });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{
+                        byte,
+                        "BIND_OPCODE_SET_ADDEND_SLEB",
+                        "addend",
+                        addend,
+                    });
+                }
             },
             macho.BIND_OPCODE_ADD_ADDR_ULEB => {
                 if (lazy_ops) {
@@ -625,7 +704,9 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                     break;
                 }
                 const x = try std.leb.readULEB128(u64, reader);
-                try writer.print(fmt_value, .{ byte, "BIND_OPCODE_ADD_ADDR_ULEB", "addr", x });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "BIND_OPCODE_ADD_ADDR_ULEB", "addr", x });
+                }
                 offset = @intCast(@as(i64, @intCast(offset)) + @as(i64, @bitCast(x)));
             },
             macho.BIND_OPCODE_DO_BIND,
@@ -639,7 +720,9 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
 
                 switch (opc) {
                     macho.BIND_OPCODE_DO_BIND => {
-                        try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND", "", imm });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND", "", imm });
+                        }
                     },
                     macho.BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB => {
                         if (lazy_ops) {
@@ -647,7 +730,14 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                             break;
                         }
                         add_addr = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB", "addr", add_addr });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB",
+                                "addr",
+                                add_addr,
+                            });
+                        }
                     },
                     macho.BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED => {
                         if (lazy_ops) {
@@ -655,7 +745,14 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                             break;
                         }
                         add_addr = imm * @sizeOf(u64);
-                        try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED", "scale", imm });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED",
+                                "scale",
+                                imm,
+                            });
+                        }
                     },
                     macho.BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB => {
                         if (lazy_ops) {
@@ -665,29 +762,28 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                         count = try std.leb.readULEB128(u64, reader);
                         const start = creader.bytes_read;
                         skip = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB",
-                            "count",
-                            count,
-                        });
-                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
-                            data[start],
-                            "",
-                            "skip",
-                            skip,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB",
+                                "count",
+                                count,
+                            });
+                            try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                                data[start],
+                                "",
+                                "skip",
+                                skip,
+                            });
+                        }
                     },
                     else => unreachable,
                 }
-                try writer.writeByte('\n');
-                try writer.writeAll("    ACTIONS:\n");
 
                 const seg = segments.items[seg_id.?];
                 var i: u64 = 0;
                 while (i < count) : (i += 1) {
                     const addr: u64 = @intCast(@as(i64, @intCast(seg.vmaddr + offset)));
-
                     if (addr > seg.vmaddr + seg.vmsize) {
                         std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
                             addr,
@@ -696,18 +792,15 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                         });
                         continue;
                     }
-
-                    const ptr_offset: u64 = @intCast(@as(i64, @intCast(seg.fileoff + offset)));
-                    const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
-                    if (addend == 0) {
-                        try writer.print(fmt_ptr, .{ addr, ptr });
-                    } else {
-                        try writer.print(fmt_ptr_with_addend, .{ addr, ptr, addend });
-                    }
+                    try bindings.append(.{
+                        .address = addr,
+                        .addend = addend,
+                        .ordinal = dylib_id,
+                        .name = try self.gpa.dupe(u8, name_buf.items),
+                    });
 
                     offset += skip + @sizeOf(u64) + add_addr;
                 }
-                try writer.writeByte('\n');
             },
             else => {
                 std.log.err("unknown opcode: {x}", .{opc});
