@@ -349,19 +349,19 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     const bind_data = self.data[lc.bind_off..][0..lc.bind_size];
     if (bind_data.len > 0) {
         try writer.writeAll("\nBIND INFO:\n");
-        try self.parseAndPrintBindInfo(bind_data, false, writer);
+        try self.printBindInfo(bind_data, false, writer);
     }
 
     const weak_bind_data = self.data[lc.weak_bind_off..][0..lc.weak_bind_size];
     if (weak_bind_data.len > 0) {
         try writer.writeAll("\nWEAK BIND INFO:\n");
-        try self.parseAndPrintBindInfo(weak_bind_data, false, writer);
+        try self.printBindInfo(weak_bind_data, false, writer);
     }
 
     const lazy_bind_data = self.data[lc.lazy_bind_off..][0..lc.lazy_bind_size];
     if (lazy_bind_data.len > 0) {
         try writer.writeAll("\nLAZY BIND INFO:\n");
-        try self.parseAndPrintBindInfo(lazy_bind_data, true, writer);
+        try self.printBindInfo(lazy_bind_data, true, writer);
     }
 }
 
@@ -526,7 +526,40 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     }
 }
 
-fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: anytype) !void {
+fn printBindInfo(self: ZachO, data: []const u8, is_lazy: bool, writer: anytype) !void {
+    var bindings = std.ArrayList(Binding).init(self.gpa);
+    defer bindings.deinit();
+    try self.parseBindInfo(data, &bindings, is_lazy, writer);
+    mem.sort(Binding, bindings.items, {}, Binding.lessThan);
+    for (bindings.items) |binding| {
+        try writer.print("0x{x} [addend: {d}]", .{ binding.address, binding.addend });
+        if (binding.ordinal) |ord| {
+            const dylib_name = self.getDylibNameByIndex(ord);
+            try writer.print(" ({s})", .{dylib_name});
+        }
+        try writer.print(" {s}\n", .{binding.name});
+    }
+}
+
+const Binding = struct {
+    address: u64,
+    addend: i64,
+    ordinal: ?u16,
+    name: []const u8,
+
+    fn lessThan(ctx: void, lhs: Binding, rhs: Binding) bool {
+        _ = ctx;
+        return lhs.address < rhs.address;
+    }
+};
+
+fn parseBindInfo(
+    self: ZachO,
+    data: []const u8,
+    bindings: *std.ArrayList(Binding),
+    lazy_ops: bool,
+    writer: anytype,
+) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -547,6 +580,8 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
     var dylib_id: ?u16 = null;
     var offset: u64 = 0;
     var addend: i64 = 0;
+    var name_buf = std.ArrayList(u8).init(self.gpa);
+    defer name_buf.deinit();
     while (true) {
         const byte = reader.readByte() catch break;
         const opc = byte & macho.BIND_OPCODE_MASK;
@@ -599,8 +634,7 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 }
             },
             macho.BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM => {
-                var name_buf = std.ArrayList(u8).init(self.gpa);
-                defer name_buf.deinit();
+                name_buf.clearRetainingCapacity();
                 try reader.readUntilDelimiterArrayList(&name_buf, 0, std.math.maxInt(u32));
                 try name_buf.append(0);
                 const name = name_buf.items;
@@ -687,6 +721,12 @@ fn parseAndPrintBindInfo(self: ZachO, data: []const u8, lazy_ops: bool, writer: 
                 var i: u64 = 0;
                 while (i < count) : (i += 1) {
                     const addr: u64 = @intCast(@as(i64, @intCast(seg.vmaddr + offset)));
+                    try bindings.append(.{
+                        .address = addr,
+                        .addend = addend,
+                        .ordinal = dylib_id,
+                        .name = try self.gpa.dupe(u8, name_buf.items),
+                    });
 
                     if (addr > seg.vmaddr + seg.vmsize) {
                         std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
