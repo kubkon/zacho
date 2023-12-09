@@ -343,7 +343,7 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     const rebase_data = self.data[lc.rebase_off..][0..lc.rebase_size];
     if (rebase_data.len > 0) {
         try writer.writeAll("REBASE INFO:\n");
-        try self.parseAndPrintRebaseInfo(rebase_data, writer);
+        try self.printRebaseInfo(rebase_data, writer);
     }
 
     const bind_data = self.data[lc.bind_off..][0..lc.bind_size];
@@ -365,7 +365,17 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     }
 }
 
-fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+fn printRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+    var rebases = std.ArrayList(u64).init(self.gpa);
+    defer rebases.deinit();
+    try self.parseRebaseInfo(data, &rebases, writer);
+    mem.sort(u64, rebases.items, {}, std.sort.asc(u64));
+    for (rebases.items) |addr| {
+        try writer.print("0x{x}\n", .{addr});
+    }
+}
+
+fn parseRebaseInfo(self: ZachO, data: []const u8, rebases: *std.ArrayList(u64), writer: anytype) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -379,7 +389,6 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
     };
 
     const fmt_value = "    {x: <8} {s: <50} {s: >20} ({x})\n";
-    const fmt_ptr = "      {x: >8} => {x: <8}\n";
 
     var seg_id: ?u8 = null;
     var offset: u64 = 0;
@@ -389,17 +398,21 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
         const imm = byte & macho.REBASE_IMMEDIATE_MASK;
         switch (opc) {
             macho.REBASE_OPCODE_DONE => {
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DONE", "", imm });
+                }
                 break;
             },
             macho.REBASE_OPCODE_SET_TYPE_IMM => {
-                const tt = switch (imm) {
-                    macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
-                    macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
-                    macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
-                    else => "UNKNOWN",
-                };
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+                if (self.verbose) {
+                    const tt = switch (imm) {
+                        macho.REBASE_TYPE_POINTER => "REBASE_TYPE_POINTER",
+                        macho.REBASE_TYPE_TEXT_ABSOLUTE32 => "REBASE_TYPE_TEXT_ABSOLUTE32",
+                        macho.REBASE_TYPE_TEXT_PCREL32 => "REBASE_TYPE_TEXT_PCREL32",
+                        else => "UNKNOWN",
+                    };
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_TYPE_IMM", tt, imm });
+                }
             },
             macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
@@ -407,34 +420,40 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 offset = try std.leb.readULEB128(u64, reader);
                 const end = creader.bytes_read;
 
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
-                if (end - start > 1) {
-                    try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
-                        data[start], data[end - 1], "", "offset", offset,
-                    });
-                } else {
-                    try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{ data[start], "", "offset", offset });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB", "segment", seg_id.? });
+                    if (end - start > 1) {
+                        try writer.print("    {x:0<2}..{x:0<2}   {s: <50} {s: >20} ({x})\n", .{
+                            data[start], data[end - 1], "", "offset", offset,
+                        });
+                    } else {
+                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{ data[start], "", "offset", offset });
+                    }
                 }
             },
             macho.REBASE_OPCODE_ADD_ADDR_IMM_SCALED => {
                 offset += imm * @sizeOf(u64);
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_IMM_SCALED", "scale", imm });
+                }
             },
             macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
                 offset += addend;
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
+                }
             },
             macho.REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
                 const addend = try std.leb.readULEB128(u64, reader);
 
-                // TODO clean up formatting
-                try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addr", addend });
-                try writer.writeAll("\n    ACTIONS:\n");
+                if (self.verbose) {
+                    // TODO clean up formatting
+                    try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB", "addr", addend });
+                }
 
                 const seg = segments.items[seg_id.?];
                 const addr = seg.vmaddr + offset;
-
                 if (addr > seg.vmaddr + seg.vmsize) {
                     std.log.err("malformed rebase: address {x} outside of segment {s} ({d})!", .{
                         addr,
@@ -443,12 +462,7 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                     });
                     continue;
                 }
-
-                const ptr_offset = seg.fileoff + offset;
-                const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
-                try writer.print(fmt_ptr, .{ addr, ptr });
-                try writer.writeByte('\n');
-
+                try rebases.append(addr);
                 offset += addend + @sizeOf(u64);
             },
             macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES,
@@ -460,44 +474,47 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                 switch (opc) {
                     macho.REBASE_OPCODE_DO_REBASE_IMM_TIMES => {
                         ntimes = imm;
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_IMM_TIMES",
-                            "count",
-                            ntimes,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_IMM_TIMES",
+                                "count",
+                                ntimes,
+                            });
+                        }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES => {
                         ntimes = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
-                            "count",
-                            ntimes,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_ULEB_TIMES",
+                                "count",
+                                ntimes,
+                            });
+                        }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB => {
                         ntimes = try std.leb.readULEB128(u64, reader);
                         const start = creader.bytes_read;
                         skip = try std.leb.readULEB128(u64, reader);
-                        try writer.print(fmt_value, .{
-                            byte,
-                            "REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB",
-                            "count",
-                            ntimes,
-                        });
-                        try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
-                            data[start],
-                            "",
-                            "skip",
-                            skip,
-                        });
+                        if (self.verbose) {
+                            try writer.print(fmt_value, .{
+                                byte,
+                                "REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB",
+                                "count",
+                                ntimes,
+                            });
+                            try writer.print("    {x:0<2} {s: <56} {s: >20} ({x})\n", .{
+                                data[start],
+                                "",
+                                "skip",
+                                skip,
+                            });
+                        }
                     },
                     else => unreachable,
                 }
-                try writer.writeByte('\n');
-                try writer.writeAll("    ACTIONS:\n");
-
                 const seg = segments.items[seg_id.?];
                 const base_addr = seg.vmaddr;
                 var count: usize = 0;
@@ -511,12 +528,9 @@ fn parseAndPrintRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void
                         });
                         continue;
                     }
-                    const ptr_offset = seg.fileoff + offset;
-                    const ptr = mem.readInt(u64, self.data[ptr_offset..][0..@sizeOf(u64)], .little);
-                    try writer.print(fmt_ptr, .{ addr, ptr });
+                    try rebases.append(addr);
                     offset += skip + @sizeOf(u64);
                 }
-                try writer.writeByte('\n');
             },
             else => {
                 std.log.err("unknown opcode: {x}", .{opc});
