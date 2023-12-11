@@ -191,6 +191,12 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .DYLD_INFO_ONLY => try printDyldInfoOnlyLC(fmt, lc, writer),
             .UUID => try printUuidLC(fmt, lc, writer),
             .RPATH => try printRpathLC(fmt, lc, writer),
+            .ID_DYLIB,
+            .LOAD_DYLIB,
+            .LOAD_WEAK_DYLIB,
+            .LOAD_UPWARD_DYLIB,
+            .REEXPORT_DYLIB,
+            => try printDylibLC(fmt, lc, writer),
             else => {},
         }
 
@@ -213,6 +219,15 @@ fn printUuidLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: an
     var buffer: [64]u8 = undefined;
     const encoded = std.base64.standard.Encoder.encode(&buffer, &cmd.uuid);
     try writer.print(f.fmt("s"), .{ "UUID:", encoded });
+}
+
+fn printDylibLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const name = lc.getDylibPathName();
+    const cmd = lc.cast(macho.dylib_command).?;
+    try writer.print(f.fmt("s"), .{ "Name:", name });
+    try writer.print(f.fmt("d"), .{ "Timestamp:", cmd.dylib.timestamp });
+    try writer.print(f.fmt("d"), .{ "Current version:", cmd.dylib.current_version });
+    try writer.print(f.fmt("d"), .{ "Compat version:", cmd.dylib.compatibility_version });
 }
 
 fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
