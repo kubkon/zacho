@@ -572,7 +572,7 @@ fn printBindInfo(self: ZachO, data: []const u8, writer: anytype) !void {
                 try writer.print("{s}", .{dylib_name});
             },
         }
-        try writer.writeAll(")\n");
+        try writer.print(") {s}\n", .{binding.name});
     }
 }
 
