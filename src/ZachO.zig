@@ -25,6 +25,7 @@ symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
 strtab: []const u8 = &[0]u8{},
 source_symtab_lookup: std.ArrayListUnmanaged(u32) = .{},
 symtab_lc: ?macho.symtab_command = null,
+dysymtab_lc: ?macho.dysymtab_command = null,
 
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
@@ -62,6 +63,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
+        .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
         .DYLD_EXPORTS_TRIE => self.dyld_exports_trie_lc = lc.cast(macho.linkedit_data_command).?,
         else => {},
@@ -2377,6 +2379,52 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
             }
 
             try writer.writeByte('\n');
+        }
+    }
+}
+
+pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
+    if (self.dysymtab_lc == null or self.dysymtab_lc.?.nindirectsyms == 0) {
+        try writer.writeAll("\nNo indirect symbol table found in the object file.\n");
+        return;
+    }
+    try writer.writeAll("\nIndirect symbol table:\n");
+
+    var sects = std.ArrayList(macho.section_64).init(self.gpa);
+    defer sects.deinit();
+    try sects.ensureUnusedCapacity(3);
+
+    if (self.getSectionByName("__TEXT", "__stubs")) |sect| sects.appendAssumeCapacity(sect);
+    if (self.getSectionByName("__DATA_CONST", "__got")) |sect| sects.appendAssumeCapacity(sect);
+    if (self.getSectionByName("__DATA", "__la_symbol_ptr")) |sect| sects.appendAssumeCapacity(sect);
+
+    const sortFn = struct {
+        fn sortFn(ctx: void, lhs: macho.section_64, rhs: macho.section_64) bool {
+            _ = ctx;
+            return lhs.reserved1 < rhs.reserved1;
+        }
+    }.sortFn;
+    mem.sort(macho.section_64, sects.items, {}, sortFn);
+
+    const lc = self.dysymtab_lc.?;
+    const indsymtab = @as([*]align(1) const u32, @ptrCast(self.data.ptr + lc.indirectsymoff))[0..lc.nindirectsyms];
+    const symtab = self.getSourceSymtab();
+
+    var i: usize = 0;
+    while (i < sects.items.len) : (i += 1) {
+        const sect = sects.items[i];
+        const start = sect.reserved1;
+        const end = if (i + 1 >= sects.items.len) indsymtab.len else sects.items[i + 1].reserved1;
+        const entry_size = blk: {
+            if (mem.eql(u8, sect.sectName(), "__stubs")) break :blk sect.reserved2;
+            break :blk @sizeOf(u64);
+        };
+
+        try writer.print("Indirect symbols for ({s},{s}) {d} entries\n", .{ sect.segName(), sect.sectName(), end - start });
+        for (indsymtab[start..end], 0..) |index, j| {
+            const sym = symtab[index];
+            const addr = sect.addr + entry_size * j;
+            try writer.print("0x{x} {d} {s}\n", .{ addr, index, self.getString(sym.n_strx) });
         }
     }
 }
