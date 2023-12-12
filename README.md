@@ -18,6 +18,7 @@ General options:
 -d, --dyld-info             Print the contents of dyld rebase and bind opcodes
 -e, --exports-trie          Print export trie (if any)
 -h, --header                Print the Mach-O header
+-i, --indirect-symbol-table Print the indirect symbol table
 -l, --load-commands         Print load commands
 -s, --symbol-table          Print the symbol table
 -u, --unwind-info           Print the contents of (compact) unwind info section (if any)

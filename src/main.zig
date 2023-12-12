@@ -12,6 +12,7 @@ const usage =
     \\-d, --dyld-info             Print the contents of dyld rebase and bind opcodes
     \\-e, --exports-trie          Print export trie (if any)
     \\-h, --header                Print the Mach-O header
+    \\-i, --indirect-symbol-table Print the indirect symbol table
     \\-l, --load-commands         Print load commands
     \\-s, --symbol-table          Print the symbol table
     \\-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
@@ -72,6 +73,7 @@ pub fn main() !void {
                 'd' => tmp.dyld_info = true,
                 'e' => tmp.exports_trie = true,
                 'h' => tmp.header = true,
+                'i' => tmp.indirect_symbol_table = true,
                 'l' => tmp.load_commands = true,
                 's' => tmp.symbol_table = true,
                 'u' => tmp.unwind_info = true,
@@ -96,6 +98,8 @@ pub fn main() !void {
             print_matrix.load_commands = true;
         } else if (std.mem.eql(u8, arg, "--symbol-table")) {
             print_matrix.symbol_table = true;
+        } else if (std.mem.eql(u8, arg, "--indirect-symbol-table")) {
+            print_matrix.indirect_symbol_table = true;
         } else if (std.mem.eql(u8, arg, "--unwind-info")) {
             print_matrix.unwind_info = true;
         } else if (std.mem.eql(u8, arg, "--verify-memory-layout")) {
@@ -143,6 +147,9 @@ pub fn main() !void {
     if (print_matrix.symbol_table) {
         try zacho.printSymbolTable(stdout);
     }
+    if (print_matrix.indirect_symbol_table) {
+        try zacho.printIndirectSymbolTable(stdout);
+    }
 }
 
 pub const Options = struct {
@@ -158,6 +165,7 @@ const PrintMatrix = packed struct {
     code_signature: bool = false,
     verify_memory_layout: bool = false,
     symbol_table: bool = false,
+    indirect_symbol_table: bool = false,
 
     const Int = blk: {
         const bits = @typeInfo(@This()).Struct.fields.len;
