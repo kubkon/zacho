@@ -2540,7 +2540,11 @@ fn getDylibByIndex(self: ZachO, index: u16) macho.LoadCommandIterator.LoadComman
     var count: u16 = 1;
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
-        .LOAD_DYLIB => {
+        .LOAD_DYLIB,
+        .LOAD_WEAK_DYLIB,
+        .LOAD_UPWARD_DYLIB,
+        .REEXPORT_DYLIB,
+        => {
             if (count == index) return lc;
             count += 1;
         },
