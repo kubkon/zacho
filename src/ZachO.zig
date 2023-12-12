@@ -364,19 +364,19 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     const bind_data = self.data[lc.bind_off..][0..lc.bind_size];
     if (bind_data.len > 0) {
         try writer.writeAll("\nBIND INFO:\n");
-        try self.printBindInfo(bind_data, false, writer);
+        try self.printBindInfo(bind_data, writer);
     }
 
     const weak_bind_data = self.data[lc.weak_bind_off..][0..lc.weak_bind_size];
     if (weak_bind_data.len > 0) {
         try writer.writeAll("\nWEAK BIND INFO:\n");
-        try self.printBindInfo(weak_bind_data, false, writer);
+        try self.printBindInfo(weak_bind_data, writer);
     }
 
     const lazy_bind_data = self.data[lc.lazy_bind_off..][0..lc.lazy_bind_size];
     if (lazy_bind_data.len > 0) {
         try writer.writeAll("\nLAZY BIND INFO:\n");
-        try self.printBindInfo(lazy_bind_data, true, writer);
+        try self.printBindInfo(lazy_bind_data, writer);
     }
 }
 
@@ -555,40 +555,48 @@ fn parseRebaseInfo(self: ZachO, data: []const u8, rebases: *std.ArrayList(u64), 
     }
 }
 
-fn printBindInfo(self: ZachO, data: []const u8, is_lazy: bool, writer: anytype) !void {
+fn printBindInfo(self: ZachO, data: []const u8, writer: anytype) !void {
     var bindings = std.ArrayList(Binding).init(self.gpa);
     defer bindings.deinit();
-    try self.parseBindInfo(data, &bindings, is_lazy, writer);
+    try self.parseBindInfo(data, &bindings, writer);
     mem.sort(Binding, bindings.items, {}, Binding.lessThan);
     for (bindings.items) |binding| {
         try writer.print("0x{x} [addend: {d}]", .{ binding.address, binding.addend });
-        if (binding.ordinal) |ord| {
-            const dylib_name = self.getDylibNameByIndex(ord);
-            try writer.print(" ({s})", .{dylib_name});
+        try writer.writeAll(" (");
+        switch (binding.tag) {
+            .self => try writer.writeAll("self"),
+            .exe => try writer.writeAll("main executable"),
+            .flat => try writer.writeAll("flat lookup"),
+            .ord => {
+                const dylib_name = self.getDylibNameByIndex(binding.ordinal);
+                try writer.print("{s}", .{dylib_name});
+            },
         }
-        try writer.print(" {s}\n", .{binding.name});
+        try writer.writeAll(")\n");
     }
 }
 
 const Binding = struct {
     address: u64,
     addend: i64,
-    ordinal: ?u16,
     name: []const u8,
+    tag: Tag,
+    ordinal: u16,
 
     fn lessThan(ctx: void, lhs: Binding, rhs: Binding) bool {
         _ = ctx;
         return lhs.address < rhs.address;
     }
+
+    const Tag = enum {
+        ord,
+        self,
+        exe,
+        flat,
+    };
 };
 
-fn parseBindInfo(
-    self: ZachO,
-    data: []const u8,
-    bindings: *std.ArrayList(Binding),
-    lazy_ops: bool,
-    writer: anytype,
-) !void {
+fn parseBindInfo(self: ZachO, data: []const u8, bindings: *std.ArrayList(Binding), writer: anytype) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -604,7 +612,8 @@ fn parseBindInfo(
     const fmt_value = "    {x:0<2}       {s: <50} {s: >20} ({x})\n";
 
     var seg_id: ?u8 = null;
-    var dylib_id: ?u16 = null;
+    var tag: Binding.Tag = .self;
+    var ordinal: u16 = 0;
     var offset: u64 = 0;
     var addend: i64 = 0;
 
@@ -620,15 +629,8 @@ fn parseBindInfo(
                 if (self.verbose) {
                     try writer.print(fmt_value, .{ byte, "BIND_OPCODE_DONE", "", imm });
                 }
-                if (!lazy_ops) {
-                    break;
-                }
             },
             macho.BIND_OPCODE_SET_TYPE_IMM => {
-                if (lazy_ops) {
-                    std.log.err("invalid opcode: BIND_OPCODE_SET_TYPE_IMM ({x})", .{opc});
-                    break;
-                }
                 if (self.verbose) {
                     const tt = switch (imm) {
                         macho.BIND_TYPE_POINTER => "BIND_TYPE_POINTER",
@@ -640,17 +642,34 @@ fn parseBindInfo(
                 }
             },
             macho.BIND_OPCODE_SET_DYLIB_ORDINAL_IMM => {
-                dylib_id = imm;
+                tag = .ord;
+                ordinal = imm;
                 if (self.verbose) {
                     try writer.print(fmt_value, .{
                         byte,
                         "BIND_OPCODE_SET_DYLIB_ORDINAL_IMM",
                         "",
-                        dylib_id.?,
+                        imm,
                     });
 
-                    const dylib_name = self.getDylibNameByIndex(dylib_id.?);
+                    const dylib_name = self.getDylibNameByIndex(imm);
                     try writer.print("             '{s}'\n", .{dylib_name});
+                }
+            },
+            macho.BIND_OPCODE_SET_DYLIB_SPECIAL_IMM => {
+                if (self.verbose) {
+                    try writer.print(fmt_value, .{
+                        byte,
+                        "BIND_OPCODE_SET_DYLIB_SPECIAL_IMM",
+                        "",
+                        imm,
+                    });
+                }
+                switch (imm) {
+                    0 => tag = .self,
+                    0xf => tag = .exe,
+                    0xe => tag = .flat,
+                    else => unreachable,
                 }
             },
             macho.BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
@@ -714,10 +733,6 @@ fn parseBindInfo(
                 }
             },
             macho.BIND_OPCODE_ADD_ADDR_ULEB => {
-                if (lazy_ops) {
-                    std.log.err("invalid opcode: BIND_OPCODE_ADD_ADDR_ULEB ({x})", .{opc});
-                    break;
-                }
                 const x = try std.leb.readULEB128(u64, reader);
                 if (self.verbose) {
                     try writer.print(fmt_value, .{ byte, "BIND_OPCODE_ADD_ADDR_ULEB", "addr", x });
@@ -740,10 +755,6 @@ fn parseBindInfo(
                         }
                     },
                     macho.BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB => {
-                        if (lazy_ops) {
-                            std.log.err("invalid opcode: BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB ({x})", .{opc});
-                            break;
-                        }
                         add_addr = try std.leb.readULEB128(u64, reader);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
@@ -755,10 +766,6 @@ fn parseBindInfo(
                         }
                     },
                     macho.BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED => {
-                        if (lazy_ops) {
-                            std.log.err("invalid opcode: BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED ({x})", .{opc});
-                            break;
-                        }
                         add_addr = imm * @sizeOf(u64);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
@@ -770,10 +777,6 @@ fn parseBindInfo(
                         }
                     },
                     macho.BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB => {
-                        if (lazy_ops) {
-                            std.log.err("invalid opcode: BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB ({x})", .{opc});
-                            break;
-                        }
                         count = try std.leb.readULEB128(u64, reader);
                         const start = creader.bytes_read;
                         skip = try std.leb.readULEB128(u64, reader);
@@ -810,7 +813,8 @@ fn parseBindInfo(
                     try bindings.append(.{
                         .address = addr,
                         .addend = addend,
-                        .ordinal = dylib_id,
+                        .tag = tag,
+                        .ordinal = ordinal,
                         .name = try self.gpa.dupe(u8, name_buf.items),
                     });
 
@@ -2353,11 +2357,11 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
 
             try writer.print(" {s}", .{sym_name});
 
-            const ord = @divTrunc(@as(i16, @bitCast(sym.n_desc)), macho.N_SYMBOL_RESOLVER);
+            const ord = @divFloor(@as(i16, @bitCast(sym.n_desc)), macho.N_SYMBOL_RESOLVER);
             switch (ord) {
-                macho.BIND_SPECIAL_DYLIB_FLAT_LOOKUP => {}, // TODO
-                macho.BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE => {}, // TODO
-                macho.BIND_SPECIAL_DYLIB_SELF => {}, // TODO
+                macho.BIND_SPECIAL_DYLIB_FLAT_LOOKUP => try writer.writeAll(" (from flat lookup)"),
+                macho.BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE => try writer.writeAll(" (from main executable)"),
+                macho.BIND_SPECIAL_DYLIB_SELF => try writer.writeAll(" (from self)"),
                 else => {
                     const dylib = self.getDylibByIndex(@as(u16, @intCast(ord)));
                     const full_path = dylib.getDylibPathName();
