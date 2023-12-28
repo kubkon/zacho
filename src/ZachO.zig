@@ -13,11 +13,7 @@ const ZigKit = @import("ZigKit");
 const CMSDecoder = ZigKit.Security.CMSDecoder;
 
 gpa: Allocator,
-arch: enum {
-    aarch64,
-    x86_64,
-    unknown,
-},
+arch: Arch,
 header: macho.mach_header_64,
 data: []const u8,
 
@@ -2306,6 +2302,167 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
     }
 }
 
+pub fn printRelocations(self: ZachO, writer: anytype) !void {
+    var has_relocs = false;
+    var it = self.getLoadCommandsIterator();
+    while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            for (lc.getSections()) |sect| {
+                const code = self.data[sect.offset..][0..sect.size];
+                const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
+                if (relocs.len == 0) continue;
+
+                try writer.print("Relocation information ({s},{s}) {d} entries:\n", .{
+                    sect.segName(),
+                    sect.sectName(),
+                    relocs.len,
+                });
+                try writer.writeAll("  address   pcrel length extern type     scattered symbolnum/value\n");
+                for (relocs) |rel| {
+                    try writer.print("  {x:0>8}", .{@as(u32, @intCast(rel.r_address))});
+                    try writer.print("  {s: <5}", .{if (rel.r_pcrel == 0) "false" else "true"});
+                    try writer.print(" {s: <6}", .{switch (rel.r_length) {
+                        0 => "byte",
+                        1 => "short",
+                        2 => "long",
+                        3 => "quad",
+                    }});
+                    try writer.print(" {s: <6}", .{if (rel.r_extern == 0) "false" else "true"});
+                    try writer.print(" {s: <8}", .{fmtRelocType(rel.r_type, self.arch)});
+                    try writer.print(" {s: <9}", .{"false"});
+
+                    if (isArm64Addend(rel.r_type, self.arch)) {
+                        try writer.print(" 0x{x}", .{rel.r_symbolnum});
+                    } else {
+                        if (rel.r_extern == 0) {
+                            const target = self.getSectionByIndex(@intCast(rel.r_symbolnum));
+                            try writer.print(" {d} ({s},{s})", .{ rel.r_symbolnum, target.segName(), target.sectName() });
+                        } else {
+                            const target = self.getSourceSymtab()[rel.r_symbolnum];
+                            try writer.print(" {s}", .{self.getString(target.n_strx)});
+                        }
+
+                        if (hasAddendInCode(rel.r_type, self.arch)) {
+                            const rel_offset = @as(usize, @intCast(rel.r_address));
+                            var addend = switch (rel.r_length) {
+                                0 => code[rel_offset],
+                                1 => mem.readInt(i16, code[rel_offset..][0..2], .little),
+                                2 => mem.readInt(i32, code[rel_offset..][0..4], .little),
+                                3 => mem.readInt(i64, code[rel_offset..][0..8], .little),
+                            };
+
+                            if (rel.r_extern == 0) {
+                                const target = self.getSectionByIndex(@intCast(rel.r_symbolnum));
+                                if (rel.r_pcrel == 1) {
+                                    addend = @as(i64, @intCast(sect.addr)) + rel.r_address + addend + 4;
+                                }
+                                if (addend < target.addr or addend > target.addr + target.size) {
+                                    try writer.writeAll(" ADDEND OVERFLOWS TARGET SECTION");
+                                } else {
+                                    addend -= @intCast(target.addr);
+                                }
+                            }
+                            try writer.print(" + 0x{x}", .{addend});
+                        }
+                    }
+
+                    try writer.writeByte('\n');
+                }
+                has_relocs = true;
+            }
+        },
+        else => {},
+    };
+
+    if (!has_relocs) {
+        try writer.writeAll("No relocation entries found.\n");
+    }
+}
+
+fn isArm64Addend(r_type: u8, arch: Arch) bool {
+    return switch (arch) {
+        .aarch64 => switch (@as(macho.reloc_type_arm64, @enumFromInt(r_type))) {
+            .ARM64_RELOC_ADDEND => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+fn hasAddendInCode(r_type: u8, arch: Arch) bool {
+    return switch (arch) {
+        .aarch64 => switch (@as(macho.reloc_type_arm64, @enumFromInt(r_type))) {
+            .ARM64_RELOC_UNSIGNED => true,
+            else => false,
+        },
+        .x86_64 => true,
+        else => false,
+    };
+}
+
+fn fmtRelocType(r_type: u8, arch: Arch) std.fmt.Formatter(formatRelocType) {
+    return .{ .data = .{
+        .r_type = r_type,
+        .arch = arch,
+    } };
+}
+
+const FmtRelocTypeCtx = struct {
+    r_type: u8,
+    arch: Arch,
+};
+
+fn formatRelocType(
+    ctx: FmtRelocTypeCtx,
+    comptime unused_fmt_string: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = unused_fmt_string;
+    const len = switch (ctx.arch) {
+        .aarch64 => blk: {
+            const r_type = switch (@as(macho.reloc_type_arm64, @enumFromInt(ctx.r_type))) {
+                .ARM64_RELOC_UNSIGNED => "UNSIGND",
+                .ARM64_RELOC_SUBTRACTOR => "SUB",
+                .ARM64_RELOC_BRANCH26 => "BR26",
+                .ARM64_RELOC_PAGE21 => "PAGE21",
+                .ARM64_RELOC_PAGEOFF12 => "PAGOF12",
+                .ARM64_RELOC_GOT_LOAD_PAGE21 => "GOTLDP",
+                .ARM64_RELOC_GOT_LOAD_PAGEOFF12 => "GOTLDPOF",
+                .ARM64_RELOC_POINTER_TO_GOT => "PTRGOT",
+                .ARM64_RELOC_TLVP_LOAD_PAGE21 => "TLVLDP",
+                .ARM64_RELOC_TLVP_LOAD_PAGEOFF12 => "TLVLDPOF",
+                .ARM64_RELOC_ADDEND => "ADDEND",
+            };
+            try writer.print("{s}", .{r_type});
+            break :blk r_type.len;
+        },
+        .x86_64 => blk: {
+            const r_type = switch (@as(macho.reloc_type_x86_64, @enumFromInt(ctx.r_type))) {
+                .X86_64_RELOC_UNSIGNED => "UNSIGND",
+                .X86_64_RELOC_SUBTRACTOR => "SUB",
+                .X86_64_RELOC_SIGNED => "SIGNED",
+                .X86_64_RELOC_SIGNED_1 => "SIGNED1",
+                .X86_64_RELOC_SIGNED_2 => "SIGNED2",
+                .X86_64_RELOC_SIGNED_4 => "SIGNED4",
+                .X86_64_RELOC_BRANCH => "BR",
+                .X86_64_RELOC_GOT_LOAD => "GOTLD",
+                .X86_64_RELOC_GOT => "GOT",
+                .X86_64_RELOC_TLV => "TLV",
+            };
+            try writer.print("{s}", .{r_type});
+            break :blk r_type.len;
+        },
+        .unknown => unreachable,
+    };
+    if (options.width) |width| {
+        if (width > len) {
+            const padding = width - len;
+            try writer.writeByteNTimes(options.fill, padding);
+        }
+    }
+}
+
 pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
     if (self.symtab_lc == null) {
         try writer.writeAll("\nNo symbol table found in the object file.\n");
@@ -2869,4 +3026,10 @@ const SymbolAtIndex = struct {
     fn lessThanByNStrx(ctx: Context, lhs: SymbolAtIndex, rhs: SymbolAtIndex) bool {
         return lhs.getSymbol(ctx).n_strx < rhs.getSymbol(ctx).n_strx;
     }
+};
+
+const Arch = enum {
+    aarch64,
+    x86_64,
+    unknown,
 };

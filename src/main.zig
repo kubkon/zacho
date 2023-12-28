@@ -14,6 +14,7 @@ const usage =
     \\-h, --header                Print the Mach-O header
     \\-i, --indirect-symbol-table Print the indirect symbol table
     \\-l, --load-commands         Print load commands
+    \\-r, --relocations           Print relocation entries (if any)
     \\-s, --symbol-table          Print the symbol table
     \\-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
     \\-v, --verbose               Print more detailed info for each flag
@@ -75,6 +76,7 @@ pub fn main() !void {
                 'h' => tmp.header = true,
                 'i' => tmp.indirect_symbol_table = true,
                 'l' => tmp.load_commands = true,
+                'r' => tmp.relocations = true,
                 's' => tmp.symbol_table = true,
                 'u' => tmp.unwind_info = true,
                 'v' => opts.verbose = true,
@@ -96,6 +98,8 @@ pub fn main() !void {
             print_matrix.header = true;
         } else if (std.mem.eql(u8, arg, "--load-commands")) {
             print_matrix.load_commands = true;
+        } else if (std.mem.eql(u8, arg, "--relocations")) {
+            print_matrix.relocations = true;
         } else if (std.mem.eql(u8, arg, "--symbol-table")) {
             print_matrix.symbol_table = true;
         } else if (std.mem.eql(u8, arg, "--indirect-symbol-table")) {
@@ -144,6 +148,9 @@ pub fn main() !void {
     if (print_matrix.verify_memory_layout) {
         try zacho.verifyMemoryLayout(stdout);
     }
+    if (print_matrix.relocations) {
+        try zacho.printRelocations(stdout);
+    }
     if (print_matrix.symbol_table) {
         try zacho.printSymbolTable(stdout);
     }
@@ -164,6 +171,7 @@ const PrintMatrix = packed struct {
     unwind_info: bool = false,
     code_signature: bool = false,
     verify_memory_layout: bool = false,
+    relocations: bool = false,
     symbol_table: bool = false,
     indirect_symbol_table: bool = false,
 
