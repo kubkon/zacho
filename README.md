@@ -20,6 +20,7 @@ General options:
 -h, --header                Print the Mach-O header
 -i, --indirect-symbol-table Print the indirect symbol table
 -l, --load-commands         Print load commands
+-r, --relocations           Print relocation entries (if any)
 -s, --symbol-table          Print the symbol table
 -u, --unwind-info           Print the contents of (compact) unwind info section (if any)
 -v, --verbose               Print more detailed info for each flag
