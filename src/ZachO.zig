@@ -1102,7 +1102,21 @@ pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
 
         const num_entries = @divExact(data.len, @sizeOf(macho.compact_unwind_entry));
         const entries = @as([*]align(1) const macho.compact_unwind_entry, @ptrCast(data))[0..num_entries];
-        const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
+        const relocs = relocs: {
+            const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
+            const out = try self.gpa.alloc(macho.relocation_info, relocs.len);
+            @memcpy(out, relocs);
+            break :relocs out;
+        };
+        defer self.gpa.free(relocs);
+
+        const sortFn = struct {
+            fn sortFn(ctx: void, lhs: macho.relocation_info, rhs: macho.relocation_info) bool {
+                _ = ctx;
+                return lhs.r_address > rhs.r_address;
+            }
+        }.sortFn;
+        mem.sort(macho.relocation_info, relocs, {}, sortFn);
 
         try writer.writeAll("Contents of __LD,__compact_unwind section:\n");
 
