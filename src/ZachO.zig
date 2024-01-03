@@ -2323,8 +2323,23 @@ pub fn printRelocations(self: ZachO, writer: anytype) !void {
         .SEGMENT_64 => {
             for (lc.getSections()) |sect| {
                 const code = self.data[sect.offset..][0..sect.size];
-                const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
+                const relocs = relocs: {
+                    const relocs = @as([*]align(1) const macho.relocation_info, @ptrCast(self.data.ptr + sect.reloff))[0..sect.nreloc];
+                    const out = try self.gpa.alloc(macho.relocation_info, relocs.len);
+                    @memcpy(out, relocs);
+                    break :relocs out;
+                };
+                defer self.gpa.free(relocs);
+
                 if (relocs.len == 0) continue;
+
+                const sortFn = struct {
+                    fn sortFn(ctx: void, lhs: macho.relocation_info, rhs: macho.relocation_info) bool {
+                        _ = ctx;
+                        return lhs.r_address > rhs.r_address;
+                    }
+                }.sortFn;
+                mem.sort(macho.relocation_info, relocs, {}, sortFn);
 
                 try writer.print("Relocation information ({s},{s}) {d} entries:\n", .{
                     sect.segName(),
