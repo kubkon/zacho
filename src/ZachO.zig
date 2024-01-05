@@ -17,9 +17,8 @@ arch: Arch,
 header: macho.mach_header_64,
 data: []const u8,
 
-symtab: std.ArrayListUnmanaged(macho.nlist_64) = .{},
+symtab: []align(1) const macho.nlist_64 = &[0]macho.nlist_64{},
 strtab: []const u8 = &[0]u8{},
-source_symtab_lookup: std.ArrayListUnmanaged(u32) = .{},
 symtab_lc: ?macho.symtab_command = null,
 dysymtab_lc: ?macho.dysymtab_command = null,
 
@@ -30,8 +29,6 @@ verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
-    self.source_symtab_lookup.deinit(self.gpa);
-    self.symtab.deinit(self.gpa);
 }
 
 pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
@@ -66,26 +63,8 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     };
 
     if (self.symtab_lc) |lc| {
-        const symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
-        try self.symtab.resize(self.gpa, symtab.len);
+        self.symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
         self.strtab = self.data[lc.stroff..][0..lc.strsize];
-
-        try self.source_symtab_lookup.ensureTotalCapacityPrecise(self.gpa, symtab.len);
-
-        var sorted_all_syms = try std.ArrayList(SymbolAtIndex).initCapacity(self.gpa, symtab.len);
-        defer sorted_all_syms.deinit();
-
-        for (symtab, 0..) |_, index| {
-            sorted_all_syms.appendAssumeCapacity(.{ .index = @as(u32, @intCast(index)) });
-        }
-
-        mem.sort(SymbolAtIndex, sorted_all_syms.items, self, SymbolAtIndex.lessThan);
-
-        for (sorted_all_syms.items, 0..) |sym_id, i| {
-            const sym = sym_id.getSymbol(self);
-            self.symtab.items[i] = sym;
-            self.source_symtab_lookup.appendAssumeCapacity(sym_id.index);
-        }
     }
 
     return self;
@@ -1060,7 +1039,7 @@ fn getUnwindInfoTargetNameAndAddend(
     code: u64,
 ) UnwindInfoTargetNameAndAddend {
     if (rel.r_extern == 1) {
-        const sym = self.symtab.items[rel.r_symbolnum];
+        const sym = self.symtab[rel.r_symbolnum];
         return .{
             .tag = .symbol,
             .name = sym.n_strx,
@@ -2367,7 +2346,7 @@ pub fn printRelocations(self: ZachO, writer: anytype) !void {
                             const target = self.getSectionByIndex(@intCast(rel.r_symbolnum));
                             try writer.print(" {d} ({s},{s})", .{ rel.r_symbolnum, target.segName(), target.sectName() });
                         } else {
-                            const target = self.getSourceSymtab()[rel.r_symbolnum];
+                            const target = self.symtab[rel.r_symbolnum];
                             try writer.print(" {s}", .{self.getString(target.n_strx)});
                         }
 
@@ -2500,12 +2479,27 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
 
     try writer.writeAll("\nSymbol table:\n");
 
-    for (self.symtab.items) |sym| {
-        if (sym.stab()) continue; // TODO
-
+    for (self.symtab) |sym| {
         const sym_name = self.getString(sym.n_strx);
 
-        if (sym.sect()) {
+        if (sym.stab()) {
+            const tt = switch (sym.n_type) {
+                macho.N_SO => "SO",
+                macho.N_OSO => "OSO",
+                macho.N_BNSYM => "BNSYM",
+                macho.N_ENSYM => "ENSYM",
+                macho.N_FUN => "FUN",
+                macho.N_GSYM => "GSYM",
+                macho.N_STSYM => "STSYM",
+                else => "TODO",
+            };
+            try writer.print("  0x{x:0>16}", .{sym.n_value});
+            if (sym.n_sect > 0) {
+                const sect = self.getSectionByIndex(sym.n_sect);
+                try writer.print(" ({s},{s})", .{ sect.segName(), sect.sectName() });
+            }
+            try writer.print(" {s} (stab) {s}\n", .{ tt, sym_name });
+        } else if (sym.sect()) {
             const sect = self.getSectionByIndex(sym.n_sect);
             try writer.print("  0x{x:0>16} ({s},{s})", .{
                 sym.n_value,
@@ -2594,7 +2588,6 @@ pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
 
     const lc = self.dysymtab_lc.?;
     const indsymtab = @as([*]align(1) const u32, @ptrCast(self.data.ptr + lc.indirectsymoff))[0..lc.nindirectsyms];
-    const symtab = self.getSourceSymtab();
 
     var i: usize = 0;
     while (i < sects.items.len) : (i += 1) {
@@ -2608,7 +2601,7 @@ pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
 
         try writer.print("Indirect symbols for ({s},{s}) {d} entries\n", .{ sect.segName(), sect.sectName(), end - start });
         for (indsymtab[start..end], 0..) |index, j| {
-            const sym = symtab[index];
+            const sym = self.symtab[index];
             const addr = sect.addr + entry_size * j;
             try writer.print("0x{x} {d} {s}\n", .{ addr, index, self.getString(sym.n_strx) });
         }
@@ -2623,14 +2616,8 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     };
 }
 
-fn getSourceSymtab(self: *const ZachO) []align(1) const macho.nlist_64 {
-    const lc = self.symtab_lc orelse return &[0]macho.nlist_64{};
-    const symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
-    return symtab;
-}
-
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
-    for (self.symtab.items) |sym| {
+    for (self.symtab) |sym| {
         if (sym.undf() or sym.tentative()) continue;
         if (sym.stab()) switch (sym.n_type) {
             macho.N_FUN => if (sym.n_sect > 0) {
@@ -3007,7 +2994,7 @@ const SymbolAtIndex = struct {
     const Context = ZachO;
 
     fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
-        return ctx.getSourceSymtab()[self.index];
+        return ctx.symtab[self.index];
     }
 
     fn getSymbolName(self: SymbolAtIndex, ctx: Context) []const u8 {
