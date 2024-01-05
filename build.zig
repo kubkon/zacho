@@ -1,8 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const Builder = std.build.Builder;
 
-pub fn build(b: *Builder) void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
 
@@ -18,7 +17,7 @@ pub fn build(b: *Builder) void {
             .target = target,
             .optimize = mode,
         });
-        exe.addModule("ZigKit", zig_kit.module("ZigKit"));
+        exe.root_module.addImport("ZigKit", zig_kit.module("ZigKit"));
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }
