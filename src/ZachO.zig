@@ -2483,7 +2483,22 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
         const sym_name = self.getString(sym.n_strx);
 
         if (sym.stab()) {
-            @panic("TODO print stabs");
+            const tt = switch (sym.n_type) {
+                macho.N_SO => "SO",
+                macho.N_OSO => "OSO",
+                macho.N_BNSYM => "BNSYM",
+                macho.N_ENSYM => "ENSYM",
+                macho.N_FUN => "FUN",
+                macho.N_GSYM => "GSYM",
+                macho.N_STSYM => "STSYM",
+                else => "TODO",
+            };
+            try writer.print("  0x{x:0>16}", .{sym.n_value});
+            if (sym.n_sect > 0) {
+                const sect = self.getSectionByIndex(sym.n_sect);
+                try writer.print(" ({s},{s})", .{ sect.segName(), sect.sectName() });
+            }
+            try writer.print(" {s} (stab) {s}\n", .{ tt, sym_name });
         } else if (sym.sect()) {
             const sect = self.getSectionByIndex(sym.n_sect);
             try writer.print("  0x{x:0>16} ({s},{s})", .{
