@@ -183,6 +183,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             => try printLinkeditDataLC(fmt, lc, writer),
             .SYMTAB => try printSymtabLC(fmt, lc, writer),
             .DYSYMTAB => try printDysymtabLC(fmt, lc, writer),
+            .BUILD_VERSION => try printBuildVersionLC(fmt, lc, writer),
             else => {},
         }
 
@@ -223,6 +224,20 @@ fn printDysymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer
     try writer.print(f.fmt("d"), .{ "Extrel entries:", cmd.nextrel });
     try writer.print(f.fmt("x"), .{ "Locrel offset:", cmd.locreloff });
     try writer.print(f.fmt("d"), .{ "Locrel entries:", cmd.nlocrel });
+}
+
+fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.build_version_command).?;
+    try writer.print(f.fmt("s"), .{ "Platform:", @tagName(cmd.platform) });
+    try writer.print(f.fmt("d"), .{ "Min OS version:", cmd.minos });
+    try writer.print(f.fmt("d"), .{ "SDK version:", cmd.sdk });
+    try writer.print(f.fmt("d"), .{ "Number of tools:", cmd.ntools });
+
+    const tools = lc.getBuildVersionTools();
+    for (tools) |tool| {
+        try writer.print(f.fmt("s"), .{ "Tool:", @tagName(tool.tool) });
+        try writer.print(f.fmt("d"), .{ "Version:", tool.version });
+    }
 }
 
 fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
