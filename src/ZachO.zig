@@ -25,6 +25,8 @@ dysymtab_lc: ?macho.dysymtab_command = null,
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
 
+data_in_code_lc: ?macho.linkedit_data_command = null,
+
 verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
@@ -59,6 +61,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
         .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
         .DYLD_EXPORTS_TRIE => self.dyld_exports_trie_lc = lc.cast(macho.linkedit_data_command).?,
+        .DATA_IN_CODE => self.data_in_code_lc = lc.cast(macho.linkedit_data_command).?,
         else => {},
     };
 
@@ -2700,6 +2703,33 @@ pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
             const addr = sect.addr + entry_size * j;
             try writer.print("0x{x} {d} {s}\n", .{ addr, index, self.getString(sym.n_strx) });
         }
+    }
+}
+
+pub fn printDataInCode(self: ZachO, writer: anytype) !void {
+    const lc = self.data_in_code_lc orelse {
+        try writer.writeAll("\nNo data-in-code entries found in the object file.\n");
+        return;
+    };
+    try writer.writeAll("\nData-in-code entries:\n");
+    try writer.writeAll("  offset length  kind\n");
+
+    const dice = dice: {
+        const raw = self.data[lc.dataoff..][0..lc.datasize];
+        const nentries = @divExact(lc.datasize, @sizeOf(macho.data_in_code_entry));
+        break :dice @as([*]align(1) const macho.data_in_code_entry, @ptrCast(raw.ptr))[0..nentries];
+    };
+
+    for (dice) |entry| {
+        const kind = switch (entry.kind) {
+            else => "UNKNOWN",
+            1 => "DATA",
+            2 => "JUMP_TABLE8",
+            3 => "JUMP_TABLE16",
+            4 => "JUMP_TABLE32",
+            5 => "ABS_JUMP_TABLE32",
+        };
+        try writer.print("{x:0>8} {d: >6}  {s}\n", .{ entry.offset, entry.length, kind });
     }
 }
 
