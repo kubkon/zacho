@@ -182,6 +182,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .SEGMENT_SPLIT_INFO,
             => try printLinkeditDataLC(fmt, lc, writer),
             .SYMTAB => try printSymtabLC(fmt, lc, writer),
+            .DYSYMTAB => try printDysymtabLC(fmt, lc, writer),
             else => {},
         }
 
@@ -200,6 +201,28 @@ fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: 
     try writer.print(f.fmt("d"), .{ "Number of symbols:", cmd.nsyms });
     try writer.print(f.fmt("x"), .{ "Strtab offset:", cmd.stroff });
     try writer.print(f.fmt("d"), .{ "Strtab size:", cmd.strsize });
+}
+
+fn printDysymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.dysymtab_command).?;
+    try writer.print(f.fmt("d"), .{ "Local syms index:", cmd.ilocalsym });
+    try writer.print(f.fmt("d"), .{ "Number of locals:", cmd.nlocalsym });
+    try writer.print(f.fmt("d"), .{ "Export syms index:", cmd.iextdefsym });
+    try writer.print(f.fmt("d"), .{ "Number of exports:", cmd.nextdefsym });
+    try writer.print(f.fmt("d"), .{ "Undef syms index:", cmd.iundefsym });
+    try writer.print(f.fmt("d"), .{ "Number of undefs:", cmd.nundefsym });
+    try writer.print(f.fmt("x"), .{ "ToC offset:", cmd.tocoff });
+    try writer.print(f.fmt("d"), .{ "ToC entries:", cmd.ntoc });
+    try writer.print(f.fmt("x"), .{ "Module tab offset:", cmd.modtaboff });
+    try writer.print(f.fmt("d"), .{ "Module tab entries:", cmd.nmodtab });
+    try writer.print(f.fmt("x"), .{ "Ref symtab offset:", cmd.extrefsymoff });
+    try writer.print(f.fmt("d"), .{ "Ref symtab entries:", cmd.nextrefsyms });
+    try writer.print(f.fmt("x"), .{ "Indsymtab offset:", cmd.indirectsymoff });
+    try writer.print(f.fmt("d"), .{ "Indsymtab entries:", cmd.nindirectsyms });
+    try writer.print(f.fmt("x"), .{ "Extrel offset:", cmd.extreloff });
+    try writer.print(f.fmt("d"), .{ "Extrel entries:", cmd.nextrel });
+    try writer.print(f.fmt("x"), .{ "Locrel offset:", cmd.locreloff });
+    try writer.print(f.fmt("d"), .{ "Locrel entries:", cmd.nlocrel });
 }
 
 fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
