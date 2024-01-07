@@ -194,6 +194,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .DYLD_ENVIRONMENT,
             => try printDylinkerLC(fmt, lc, writer),
             .MAIN => try printEntryPointLC(fmt, lc, writer),
+            .SOURCE_VERSION => try printSourceVersionLC(fmt, lc, writer),
             else => {},
         }
 
@@ -204,6 +205,11 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printSourceVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.source_version_command).?;
+    try writer.print(f.fmt("d"), .{ "Version:", cmd.version });
 }
 
 fn printDylinkerLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
