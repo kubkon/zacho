@@ -184,6 +184,11 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .SYMTAB => try printSymtabLC(fmt, lc, writer),
             .DYSYMTAB => try printDysymtabLC(fmt, lc, writer),
             .BUILD_VERSION => try printBuildVersionLC(fmt, lc, writer),
+            .VERSION_MIN_MACOSX,
+            .VERSION_MIN_IPHONEOS,
+            .VERSION_MIN_WATCHOS,
+            .VERSION_MIN_TVOS,
+            => try printVersionMinLC(fmt, lc, writer),
             else => {},
         }
 
@@ -238,6 +243,12 @@ fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, wr
         try writer.print(f.fmt("s"), .{ "Tool:", @tagName(tool.tool) });
         try writer.print(f.fmt("d"), .{ "Version:", tool.version });
     }
+}
+
+fn printVersionMinLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.version_min_command).?;
+    try writer.print(f.fmt("d"), .{ "Version:", cmd.version });
+    try writer.print(f.fmt("d"), .{ "SDK version:", cmd.sdk });
 }
 
 fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
