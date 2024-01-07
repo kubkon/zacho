@@ -174,6 +174,13 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .LOAD_UPWARD_DYLIB,
             .REEXPORT_DYLIB,
             => try printDylibLC(fmt, lc, writer),
+            .DATA_IN_CODE,
+            .CODE_SIGNATURE,
+            .FUNCTION_STARTS,
+            .LINKER_OPTIMIZATION_HINT,
+            .DYLIB_CODE_SIGN_DRS,
+            .SEGMENT_SPLIT_INFO,
+            => try printLinkeditDataLC(fmt, lc, writer),
             else => {},
         }
 
@@ -219,6 +226,12 @@ fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, wr
     try writer.print(f.fmt("x"), .{ "Lazy binding size:", cmd.lazy_bind_size });
     try writer.print(f.fmt("x"), .{ "Export offset:", cmd.export_off });
     try writer.print(f.fmt("x"), .{ "Export size:", cmd.export_size });
+}
+
+fn printLinkeditDataLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.linkedit_data_command).?;
+    try writer.print(f.fmt("x"), .{ "Data offset:", cmd.dataoff });
+    try writer.print(f.fmt("x"), .{ "Data size:", cmd.datasize });
 }
 
 fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
