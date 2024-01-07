@@ -18,6 +18,7 @@ header: macho.mach_header_64,
 data: []const u8,
 
 symtab: []align(1) const macho.nlist_64 = &[0]macho.nlist_64{},
+sorted_symtab: std.ArrayListUnmanaged(SymbolAtIndex) = .{},
 strtab: []const u8 = &[0]u8{},
 symtab_lc: ?macho.symtab_command = null,
 dysymtab_lc: ?macho.dysymtab_command = null,
@@ -31,6 +32,7 @@ verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
+    self.sorted_symtab.deinit(self.gpa);
 }
 
 pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
@@ -68,6 +70,45 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     if (self.symtab_lc) |lc| {
         self.symtab = @as([*]align(1) const macho.nlist_64, @ptrCast(self.data.ptr + lc.symoff))[0..lc.nsyms];
         self.strtab = self.data[lc.stroff..][0..lc.strsize];
+
+        // Filter defined symbols, sort by address and then by seniority
+        try self.sorted_symtab.ensureTotalCapacityPrecise(self.gpa, self.symtab.len);
+        for (self.symtab, 0..) |sym, idx| {
+            if (sym.stab() or !sym.sect()) continue;
+            self.sorted_symtab.appendAssumeCapacity(.{ .index = @intCast(idx), .size = 0 });
+        }
+
+        mem.sort(SymbolAtIndex, self.sorted_symtab.items, &self, SymbolAtIndex.lessThan);
+
+        // Remove duplicates
+        var i: usize = 0;
+        while (i < self.sorted_symtab.items.len) : (i += 1) {
+            const start = i;
+            const curr = self.sorted_symtab.items[start].getSymbol(&self);
+
+            while (i < self.sorted_symtab.items.len and
+                self.sorted_symtab.items[i].getSymbol(&self).n_sect == curr.n_sect and
+                self.sorted_symtab.items[i].getSymbol(&self).n_value == curr.n_value) : (i += 1)
+            {}
+
+            for (1..i - start) |j| {
+                _ = self.sorted_symtab.orderedRemove(start + j);
+            }
+            i = start;
+        }
+
+        // Estimate symbol sizes
+        i = 0;
+        while (i < self.sorted_symtab.items.len) : (i += 1) {
+            const curr = self.sorted_symtab.items[i].getSymbol(&self);
+            const sect = self.getSectionByIndex(curr.n_sect);
+            const end = if (i + 1 < self.sorted_symtab.items.len)
+                self.sorted_symtab.items[i + 1].getSymbol(&self).n_value
+            else
+                sect.addr + sect.size;
+            const size = end - curr.n_value;
+            self.sorted_symtab.items[i].size = size;
+        }
     }
 
     return self;
@@ -2729,7 +2770,17 @@ pub fn printDataInCode(self: ZachO, writer: anytype) !void {
             4 => "JUMP_TABLE32",
             5 => "ABS_JUMP_TABLE32",
         };
-        try writer.print("{x:0>8} {d: >6}  {s}\n", .{ entry.offset, entry.length, kind });
+        try writer.print("{x:0>8} {d: >6}  {s}", .{ entry.offset, entry.length, kind });
+
+        if (self.verbose) {
+            const name = if (self.findSymbolByAddress(entry.offset)) |sym|
+                self.getString(sym.n_strx)
+            else
+                "INVALID TARGET OFFSET";
+            try writer.print("  {s}", .{name});
+        }
+
+        try writer.writeByte('\n');
     }
 }
 
@@ -2742,16 +2793,9 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
 }
 
 fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
-    for (self.symtab) |sym| {
-        if (sym.undf() or sym.tentative()) continue;
-        if (sym.stab()) switch (sym.n_type) {
-            macho.N_FUN => if (sym.n_sect > 0) {
-                if (sym.n_value == addr) return sym;
-                continue;
-            },
-            else => continue,
-        };
-        if (sym.n_value == addr) return sym;
+    for (self.sorted_symtab.items) |idx| {
+        const sym = idx.getSymbol(self);
+        if (sym.n_value <= addr and addr < sym.n_value + idx.size) return sym;
     }
     return null;
 }
@@ -3115,8 +3159,9 @@ pub const UnwindEncodingX86_64 = union(enum) {
 
 const SymbolAtIndex = struct {
     index: u32,
+    size: u64,
 
-    const Context = ZachO;
+    const Context = *const ZachO;
 
     fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
         return ctx.symtab[self.index];
@@ -3129,39 +3174,24 @@ const SymbolAtIndex = struct {
 
     fn getSymbolSeniority(self: SymbolAtIndex, ctx: Context) u2 {
         const sym = self.getSymbol(ctx);
-        if (!sym.ext()) {
-            const sym_name = self.getSymbolName(ctx);
-            if (mem.startsWith(u8, sym_name, "l") or mem.startsWith(u8, sym_name, "L")) return 3;
-            return 2;
-        }
-        if (sym.weakDef() or sym.pext()) return 1;
-        return 0;
+        if (sym.ext()) return 1;
+        const sym_name = self.getSymbolName(ctx);
+        if (mem.startsWith(u8, sym_name, "l") or mem.startsWith(u8, sym_name, "L")) return 3;
+        return 2;
     }
 
-    /// Performs lexicographic-like check.
-    /// * lhs and rhs defined
-    ///   * if lhs == rhs
-    ///     * if lhs.n_sect == rhs.n_sect
-    ///       * ext < weak < local < temp
-    ///     * lhs.n_sect < rhs.n_sect
-    ///   * lhs < rhs
-    /// * !rhs is undefined
     fn lessThan(ctx: Context, lhs_index: SymbolAtIndex, rhs_index: SymbolAtIndex) bool {
         const lhs = lhs_index.getSymbol(ctx);
         const rhs = rhs_index.getSymbol(ctx);
-        if (lhs.sect() and rhs.sect()) {
-            if (lhs.n_value == rhs.n_value) {
-                if (lhs.n_sect == rhs.n_sect) {
-                    const lhs_senior = lhs_index.getSymbolSeniority(ctx);
-                    const rhs_senior = rhs_index.getSymbolSeniority(ctx);
-                    if (lhs_senior == rhs_senior) {
-                        return lessThanByNStrx(ctx, lhs_index, rhs_index);
-                    } else return lhs_senior < rhs_senior;
-                } else return lhs.n_sect < rhs.n_sect;
-            } else return lhs.n_value < rhs.n_value;
-        } else if (lhs.undf() and rhs.undf()) {
-            return lessThanByNStrx(ctx, lhs_index, rhs_index);
-        } else return rhs.undf();
+        if (lhs.n_value == rhs.n_value) {
+            if (lhs.n_sect == rhs.n_sect) {
+                const lhs_senior = lhs_index.getSymbolSeniority(ctx);
+                const rhs_senior = rhs_index.getSymbolSeniority(ctx);
+                if (lhs_senior == rhs_senior) {
+                    return lessThanByNStrx(ctx, lhs_index, rhs_index);
+                } else return lhs_senior < rhs_senior;
+            } else return lhs.n_sect < rhs.n_sect;
+        } else return lhs.n_value < rhs.n_value;
     }
 
     fn lessThanByNStrx(ctx: Context, lhs: SymbolAtIndex, rhs: SymbolAtIndex) bool {
