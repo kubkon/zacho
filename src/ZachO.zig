@@ -308,7 +308,10 @@ fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, wr
 
     const tools = lc.getBuildVersionTools();
     for (tools) |tool| {
-        try writer.print(f.fmt("s"), .{ "Tool:", @tagName(tool.tool) });
+        switch (tool.tool) {
+            .CLANG, .SWIFT, .LD, .LLD, .ZIG => try writer.print(f.fmt("s"), .{ "Tool:", @tagName(tool.tool) }),
+            else => try writer.print(f.fmt("x"), .{ "Tool:", @intFromEnum(tool.tool) }),
+        }
         try writer.print(f.fmt("d"), .{ "Version:", tool.version });
     }
 }
