@@ -181,6 +181,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .DYLIB_CODE_SIGN_DRS,
             .SEGMENT_SPLIT_INFO,
             => try printLinkeditDataLC(fmt, lc, writer),
+            .SYMTAB => try printSymtabLC(fmt, lc, writer),
             else => {},
         }
 
@@ -191,6 +192,14 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.symtab_command).?;
+    try writer.print(f.fmt("x"), .{ "Symtab offset:", cmd.symoff });
+    try writer.print(f.fmt("d"), .{ "Number of symbols:", cmd.nsyms });
+    try writer.print(f.fmt("x"), .{ "Strtab offset:", cmd.stroff });
+    try writer.print(f.fmt("d"), .{ "Strtab size:", cmd.strsize });
 }
 
 fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
