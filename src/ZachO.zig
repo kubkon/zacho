@@ -15,6 +15,7 @@ const CMSDecoder = ZigKit.Security.CMSDecoder;
 gpa: Allocator,
 arch: Arch,
 header: macho.mach_header_64,
+segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
 data: []const u8,
 
 symtab: []align(1) const macho.nlist_64 = &[0]macho.nlist_64{},
@@ -32,6 +33,7 @@ verbose: bool,
 
 pub fn deinit(self: *ZachO) void {
     self.gpa.free(self.data);
+    self.segments.deinit(self.gpa);
     self.sorted_symtab.deinit(self.gpa);
 }
 
@@ -59,6 +61,10 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
 
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
+        .SEGMENT_64 => {
+            const cmd = lc.cast(macho.segment_command_64).?;
+            try self.segments.append(gpa, cmd);
+        },
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
@@ -2776,7 +2782,11 @@ pub fn printDataInCode(self: ZachO, writer: anytype) !void {
         try writer.print("{x:0>8} {d: >6}  {s}", .{ entry.offset, entry.length, kind });
 
         if (self.verbose) {
-            const name = if (self.findSymbolByAddress(entry.offset)) |sym|
+            const seg = if (self.header.filetype == macho.MH_EXECUTE)
+                self.getSegmentByName("__TEXT").?
+            else
+                self.segments.items[0];
+            const name = if (self.findSymbolByAddress(seg.vmaddr + entry.offset)) |sym|
                 self.getString(sym.n_strx)
             else
                 "INVALID TARGET OFFSET";
@@ -2887,16 +2897,12 @@ fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
 }
 
 fn getSegmentByName(self: ZachO, segname: []const u8) ?macho.segment_command_64 {
-    var it = self.getLoadCommandsIterator();
-    while (it.next()) |lc| switch (lc.cmd()) {
-        .SEGMENT_64 => {
-            const seg = lc.cast(macho.segment_command_64).?;
-            if (mem.eql(u8, segname, seg.segName())) {
-                return seg;
-            }
-        },
-        else => continue,
-    } else return null;
+    for (self.segments.items) |seg| {
+        if (mem.eql(u8, segname, seg.segName())) {
+            return seg;
+        }
+    }
+    return null;
 }
 
 fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
