@@ -189,6 +189,10 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .VERSION_MIN_WATCHOS,
             .VERSION_MIN_TVOS,
             => try printVersionMinLC(fmt, lc, writer),
+            .ID_DYLINKER,
+            .LOAD_DYLINKER,
+            .DYLD_ENVIRONMENT,
+            => try printDylinkerLC(fmt, lc, writer),
             .MAIN => try printEntryPointLC(fmt, lc, writer),
             else => {},
         }
@@ -200,6 +204,13 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printDylinkerLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.dylinker_command).?;
+    const data = lc.data[cmd.name..];
+    const name = mem.sliceTo(data, 0);
+    try writer.print(f.fmt("s"), .{ "Dynamic linker:", name });
 }
 
 fn printEntryPointLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
