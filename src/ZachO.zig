@@ -189,6 +189,7 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
             .VERSION_MIN_WATCHOS,
             .VERSION_MIN_TVOS,
             => try printVersionMinLC(fmt, lc, writer),
+            .MAIN => try printEntryPointLC(fmt, lc, writer),
             else => {},
         }
 
@@ -199,6 +200,12 @@ pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
 fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
+}
+
+fn printEntryPointLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+    const cmd = lc.cast(macho.entry_point_command).?;
+    try writer.print(f.fmt("x"), .{ "Entry offset:", cmd.entryoff });
+    try writer.print(f.fmt("d"), .{ "Initial stack size:", cmd.stacksize });
 }
 
 fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
