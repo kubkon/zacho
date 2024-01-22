@@ -18,6 +18,7 @@ const usage =
     \\-s, --symbol-table          Print the symbol table
     \\-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
     \\-v, --verbose               Print more detailed info for each flag
+    \\--string-table              Print the string table
     \\--data-in-code              Print data-in-code entries (if any)
     \\--verify-memory-layout      Print virtual memory layout and verify there is no overlap
     \\--help                      Display this help and exit
@@ -107,6 +108,8 @@ pub fn main() !void {
             print_matrix.indirect_symbol_table = true;
         } else if (std.mem.eql(u8, arg, "--unwind-info")) {
             print_matrix.unwind_info = true;
+        } else if (std.mem.eql(u8, arg, "--string-table")) {
+            print_matrix.string_table = true;
         } else if (std.mem.eql(u8, arg, "--data-in-code")) {
             print_matrix.data_in_code = true;
         } else if (std.mem.eql(u8, arg, "--verify-memory-layout")) {
@@ -160,6 +163,9 @@ pub fn main() !void {
     if (print_matrix.symbol_table) {
         try zacho.printSymbolTable(stdout);
     }
+    if (print_matrix.string_table) {
+        try zacho.printStringTable(stdout);
+    }
     if (print_matrix.indirect_symbol_table) {
         try zacho.printIndirectSymbolTable(stdout);
     }
@@ -181,6 +187,7 @@ const PrintMatrix = packed struct {
     symbol_table: bool = false,
     indirect_symbol_table: bool = false,
     data_in_code: bool = false,
+    string_table: bool = false,
 
     const Int = blk: {
         const bits = @typeInfo(@This()).Struct.fields.len;

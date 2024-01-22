@@ -2711,6 +2711,28 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
     }
 }
 
+pub fn printStringTable(self: ZachO, writer: anytype) !void {
+    if (self.symtab_lc == null or self.symtab_lc.?.strsize == 0) {
+        try writer.writeAll("\nNo string table found in the object file.\n");
+        return;
+    }
+    try writer.writeAll("\nString table:\n");
+
+    var strings = std.ArrayList(struct { pos: usize, str: []const u8 }).init(self.gpa);
+    defer strings.deinit();
+
+    var pos: usize = 0;
+    while (pos < self.strtab.len) {
+        const str = mem.sliceTo(@as([*:0]const u8, @ptrCast(self.strtab.ptr + pos)), 0);
+        try strings.append(.{ .pos = pos, .str = str });
+        pos += str.len + 1;
+    }
+
+    for (strings.items) |str| {
+        try writer.print("{d}: {s}\n", .{ str.pos, str.str });
+    }
+}
+
 pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
     if (self.dysymtab_lc == null or self.dysymtab_lc.?.nindirectsyms == 0) {
         try writer.writeAll("\nNo indirect symbol table found in the object file.\n");
