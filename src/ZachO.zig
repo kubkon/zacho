@@ -2614,7 +2614,13 @@ fn formatRelocType(
     if (options.width) |width| {
         if (width > len) {
             const padding = width - len;
-            try writer.writeByteNTimes(options.fill, padding);
+            // TODO I have no idea what I'm doing here!
+            var fill_buffer: [4]u8 = undefined;
+            const fill = if (std.unicode.utf8Encode(options.fill, &fill_buffer)) |l|
+                fill_buffer[0..l]
+            else |_|
+                @panic("impossible to apply fmt fill!");
+            try writer.writeBytesNTimes(fill, padding);
         }
     }
 }
