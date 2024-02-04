@@ -17,10 +17,10 @@ dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
 
 data_in_code_lc: ?macho.linkedit_data_command = null,
 
-verbose: bool,
+verbose: bool = false,
 
 pub fn deinit(self: *Object) void {
-    self.gpa.free(self.data);
+    self.gpa.free(self.path);
     self.segments.deinit(self.gpa);
     self.sorted_symtab.deinit(self.gpa);
 }

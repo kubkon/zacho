@@ -21,6 +21,7 @@ const usage =
     \\-s, --symbol-table          Print the symbol table
     \\-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
     \\-v, --verbose               Print more detailed info for each flag
+    \\--archive-index             Print archive index (if any)
     \\--string-table              Print the string table
     \\--data-in-code              Print data-in-code entries (if any)
     \\--verify-memory-layout      Print virtual memory layout and verify there is no overlap
@@ -113,6 +114,8 @@ pub fn main() !void {
             print_matrix.unwind_info = true;
         } else if (std.mem.eql(u8, arg, "--string-table")) {
             print_matrix.string_table = true;
+        } else if (std.mem.eql(u8, arg, "--archive-index")) {
+            print_matrix.archive_index = true;
         } else if (std.mem.eql(u8, arg, "--data-in-code")) {
             print_matrix.data_in_code = true;
         } else if (std.mem.eql(u8, arg, "--verify-memory-layout")) {
@@ -136,9 +139,20 @@ pub fn main() !void {
     if (try fat.isFatLibrary(fname)) {
         fatal("TODO: handle fat (universal) files: {s} is a fat file", .{fname});
     } else if (try Archive.isArchive(fname, null)) {
-        fatal("TODO: handle archives: {s} is an archive", .{fname});
+        var archive = Archive{ .gpa = gpa, .data = data, .path = try gpa.dupe(u8, fname), .verbose = opts.verbose };
+        defer archive.deinit();
+        try archive.parse();
+        if (print_matrix.archive_index) {
+            try archive.printSymbolTable(stdout);
+        }
+        print_matrix.archive_index = false;
+        if (!print_matrix.isUnset()) for (archive.objects.values()) |object| {
+            try stdout.print("File: {s}({s})\n", .{ archive.path, object.path });
+            try printObject(object, print_matrix, stdout);
+        };
     } else {
-        var object = Object{ .gpa = gpa, .data = data, .path = fname, .verbose = opts.verbose };
+        var object = Object{ .gpa = gpa, .data = data, .path = try gpa.dupe(u8, fname), .verbose = opts.verbose };
+        defer object.deinit();
         object.parse() catch |err| switch (err) {
             error.InvalidMagic => fatal("not a MachO file - invalid magic bytes", .{}),
             else => |e| return e,
@@ -203,6 +217,7 @@ const PrintMatrix = packed struct {
     indirect_symbol_table: bool = false,
     data_in_code: bool = false,
     string_table: bool = false,
+    archive_index: bool = false,
 
     const Int = blk: {
         const bits = @typeInfo(@This()).Struct.fields.len;
