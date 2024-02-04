@@ -1,5 +1,5 @@
 const std = @import("std");
-const ZachO = @import("ZachO.zig");
+const Object = @import("Object.zig");
 
 var allocator = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa = allocator.allocator();
@@ -130,44 +130,44 @@ pub fn main() !void {
     defer file.close();
     const data = try file.readToEndAlloc(arena, std.math.maxInt(u32));
 
-    var zacho = try ZachO.parse(arena, data, opts.verbose);
+    var object = try Object.parse(arena, data, opts.verbose);
     const stdout = std.io.getStdOut().writer();
 
     if (print_matrix.header) {
-        try zacho.printHeader(stdout);
+        try object.printHeader(stdout);
     }
     if (print_matrix.load_commands) {
-        try zacho.printLoadCommands(stdout);
+        try object.printLoadCommands(stdout);
     }
     if (print_matrix.dyld_info) {
-        try zacho.printDyldInfo(stdout);
+        try object.printDyldInfo(stdout);
     }
     if (print_matrix.exports_trie) {
-        try zacho.printExportsTrie(stdout);
+        try object.printExportsTrie(stdout);
     }
     if (print_matrix.unwind_info) {
-        try zacho.printUnwindInfo(stdout);
+        try object.printUnwindInfo(stdout);
     }
     if (print_matrix.data_in_code) {
-        try zacho.printDataInCode(stdout);
+        try object.printDataInCode(stdout);
     }
     if (print_matrix.code_signature) {
-        try zacho.printCodeSignature(stdout);
+        try object.printCodeSignature(stdout);
     }
     if (print_matrix.verify_memory_layout) {
-        try zacho.verifyMemoryLayout(stdout);
+        try object.verifyMemoryLayout(stdout);
     }
     if (print_matrix.relocations) {
-        try zacho.printRelocations(stdout);
+        try object.printRelocations(stdout);
     }
     if (print_matrix.symbol_table) {
-        try zacho.printSymbolTable(stdout);
+        try object.printSymbolTable(stdout);
     }
     if (print_matrix.string_table) {
-        try zacho.printStringTable(stdout);
+        try object.printStringTable(stdout);
     }
     if (print_matrix.indirect_symbol_table) {
-        try zacho.printIndirectSymbolTable(stdout);
+        try object.printIndirectSymbolTable(stdout);
     }
 }
 
