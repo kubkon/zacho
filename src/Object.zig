@@ -1,22 +1,10 @@
-const ZachO = @This();
-
-const std = @import("std");
-const builtin = @import("builtin");
-const assert = std.debug.assert;
-const fs = std.fs;
-const io = std.io;
-const mem = std.mem;
-const macho = std.macho;
-
-const Allocator = std.mem.Allocator;
-const ZigKit = @import("ZigKit");
-const CMSDecoder = ZigKit.Security.CMSDecoder;
-
 gpa: Allocator,
-arch: Arch,
-header: macho.mach_header_64,
-segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
 data: []const u8,
+path: []const u8,
+
+arch: Arch = undefined,
+header: macho.mach_header_64 = undefined,
+segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
 
 symtab: []align(1) const macho.nlist_64 = &[0]macho.nlist_64{},
 sorted_symtab: std.ArrayListUnmanaged(SymbolAtIndex) = .{},
@@ -29,23 +17,15 @@ dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
 
 data_in_code_lc: ?macho.linkedit_data_command = null,
 
-verbose: bool,
+verbose: bool = false,
 
-pub fn deinit(self: *ZachO) void {
-    self.gpa.free(self.data);
+pub fn deinit(self: *Object) void {
+    self.gpa.free(self.path);
     self.segments.deinit(self.gpa);
     self.sorted_symtab.deinit(self.gpa);
 }
 
-pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
-    var self = ZachO{
-        .gpa = gpa,
-        .arch = undefined,
-        .header = undefined,
-        .data = data,
-        .verbose = verbose,
-    };
-
+pub fn parse(self: *Object) !void {
     var stream = std.io.fixedBufferStream(self.data);
     const reader = stream.reader();
     const header = try reader.readStruct(macho.mach_header_64);
@@ -63,7 +43,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
             const cmd = lc.cast(macho.segment_command_64).?;
-            try self.segments.append(gpa, cmd);
+            try self.segments.append(self.gpa, cmd);
         },
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
@@ -84,17 +64,17 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
             self.sorted_symtab.appendAssumeCapacity(.{ .index = @intCast(idx), .size = 0 });
         }
 
-        mem.sort(SymbolAtIndex, self.sorted_symtab.items, &self, SymbolAtIndex.lessThan);
+        mem.sort(SymbolAtIndex, self.sorted_symtab.items, self, SymbolAtIndex.lessThan);
 
         // Remove duplicates
         var i: usize = 0;
         while (i < self.sorted_symtab.items.len) : (i += 1) {
             const start = i;
-            const curr = self.sorted_symtab.items[start].getSymbol(&self);
+            const curr = self.sorted_symtab.items[start].getSymbol(self);
 
             while (i < self.sorted_symtab.items.len and
-                self.sorted_symtab.items[i].getSymbol(&self).n_sect == curr.n_sect and
-                self.sorted_symtab.items[i].getSymbol(&self).n_value == curr.n_value) : (i += 1)
+                self.sorted_symtab.items[i].getSymbol(self).n_sect == curr.n_sect and
+                self.sorted_symtab.items[i].getSymbol(self).n_value == curr.n_value) : (i += 1)
             {}
 
             for (1..i - start) |j| {
@@ -106,21 +86,19 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !ZachO {
         // Estimate symbol sizes
         i = 0;
         while (i < self.sorted_symtab.items.len) : (i += 1) {
-            const curr = self.sorted_symtab.items[i].getSymbol(&self);
+            const curr = self.sorted_symtab.items[i].getSymbol(self);
             const sect = self.getSectionByIndex(curr.n_sect);
             const end = if (i + 1 < self.sorted_symtab.items.len)
-                self.sorted_symtab.items[i + 1].getSymbol(&self).n_value
+                self.sorted_symtab.items[i + 1].getSymbol(self).n_value
             else
                 sect.addr + sect.size;
             const size = end - curr.n_value;
             self.sorted_symtab.items[i].size = size;
         }
     }
-
-    return self;
 }
 
-pub fn printHeader(self: ZachO, writer: anytype) !void {
+pub fn printHeader(self: Object, writer: anytype) !void {
     const header = self.header;
 
     const cputype = switch (header.cputype) {
@@ -201,7 +179,7 @@ pub fn printHeader(self: ZachO, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
-pub fn printLoadCommands(self: ZachO, writer: anytype) !void {
+pub fn printLoadCommands(self: Object, writer: anytype) !void {
     const fmt = struct {
         pub fn fmt(comptime specifier: []const u8) []const u8 {
             return "  {s: <20} {" ++ specifier ++ ": >30}\n";
@@ -475,7 +453,7 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
     try writer.print(f.fmt("x"), .{ "Reserved 3:", sect.reserved3 });
 }
 
-pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
+pub fn printDyldInfo(self: Object, writer: anytype) !void {
     const lc = self.dyld_info_only_lc orelse {
         return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
     };
@@ -505,7 +483,7 @@ pub fn printDyldInfo(self: ZachO, writer: anytype) !void {
     }
 }
 
-fn printRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+fn printRebaseInfo(self: Object, data: []const u8, writer: anytype) !void {
     var rebases = std.ArrayList(u64).init(self.gpa);
     defer rebases.deinit();
     try self.parseRebaseInfo(data, &rebases, writer);
@@ -515,7 +493,7 @@ fn printRebaseInfo(self: ZachO, data: []const u8, writer: anytype) !void {
     }
 }
 
-fn parseRebaseInfo(self: ZachO, data: []const u8, rebases: *std.ArrayList(u64), writer: anytype) !void {
+fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64), writer: anytype) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -680,7 +658,7 @@ fn parseRebaseInfo(self: ZachO, data: []const u8, rebases: *std.ArrayList(u64), 
     }
 }
 
-fn printBindInfo(self: ZachO, data: []const u8, writer: anytype) !void {
+fn printBindInfo(self: Object, data: []const u8, writer: anytype) !void {
     var bindings = std.ArrayList(Binding).init(self.gpa);
     defer bindings.deinit();
     try self.parseBindInfo(data, &bindings, writer);
@@ -721,7 +699,7 @@ const Binding = struct {
     };
 };
 
-fn parseBindInfo(self: ZachO, data: []const u8, bindings: *std.ArrayList(Binding), writer: anytype) !void {
+fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Binding), writer: anytype) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -954,7 +932,7 @@ fn parseBindInfo(self: ZachO, data: []const u8, bindings: *std.ArrayList(Binding
     }
 }
 
-pub fn printExportsTrie(self: ZachO, writer: anytype) !void {
+pub fn printExportsTrie(self: Object, writer: anytype) !void {
     const maybe_data = if (self.dyld_info_only_lc) |lc|
         self.data[lc.export_off..][0..lc.export_size]
     else if (self.dyld_exports_trie_lc) |lc|
@@ -1173,16 +1151,16 @@ const UnwindInfoTargetNameAndAddend = struct {
     name: u32,
     addend: u64,
 
-    fn getName(self: UnwindInfoTargetNameAndAddend, zacho: *const ZachO) []const u8 {
+    fn getName(self: UnwindInfoTargetNameAndAddend, object: *const Object) []const u8 {
         switch (self.tag) {
-            .symbol => return zacho.getString(self.name),
-            .section => return zacho.getSectionByIndex(@intCast(self.name)).sectName(),
+            .symbol => return object.getString(self.name),
+            .section => return object.getSectionByIndex(@intCast(self.name)).sectName(),
         }
     }
 };
 
 fn getUnwindInfoTargetNameAndAddend(
-    self: *const ZachO,
+    self: *const Object,
     rel: macho.relocation_info,
     code: u64,
 ) UnwindInfoTargetNameAndAddend {
@@ -1210,7 +1188,7 @@ fn getUnwindInfoTargetNameAndAddend(
     }
 }
 
-pub fn printUnwindInfo(self: *const ZachO, writer: anytype) !void {
+pub fn printUnwindInfo(self: *const Object, writer: anytype) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
     if (is_obj) {
@@ -1798,7 +1776,7 @@ fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype,
     }
 }
 
-pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
+pub fn printCodeSignature(self: Object, writer: anytype) !void {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .CODE_SIGNATURE => return self.formatCodeSignatureData(lc.cast(macho.linkedit_data_command).?, writer),
@@ -1808,7 +1786,7 @@ pub fn printCodeSignature(self: ZachO, writer: anytype) !void {
 }
 
 fn formatCodeSignatureData(
-    self: ZachO,
+    self: Object,
     csig: macho.linkedit_data_command,
     writer: anytype,
 ) !void {
@@ -2304,7 +2282,7 @@ pub const EXPR_OP_GENERIC_SKIP: u32 = 0x40;
 pub const LEAF_CERT = 0;
 pub const ROOT_CERT = -1;
 
-pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
+pub fn verifyMemoryLayout(self: Object, writer: anytype) !void {
     var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
     defer segments.deinit();
 
@@ -2443,7 +2421,7 @@ pub fn verifyMemoryLayout(self: ZachO, writer: anytype) !void {
     }
 }
 
-pub fn printRelocations(self: ZachO, writer: anytype) !void {
+pub fn printRelocations(self: Object, writer: anytype) !void {
     var has_relocs = false;
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -2625,7 +2603,7 @@ fn formatRelocType(
     }
 }
 
-pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
+pub fn printSymbolTable(self: Object, writer: anytype) !void {
     if (self.symtab_lc == null) {
         try writer.writeAll("\nNo symbol table found in the object file.\n");
         return;
@@ -2717,7 +2695,7 @@ pub fn printSymbolTable(self: ZachO, writer: anytype) !void {
     }
 }
 
-pub fn printStringTable(self: ZachO, writer: anytype) !void {
+pub fn printStringTable(self: Object, writer: anytype) !void {
     if (self.symtab_lc == null or self.symtab_lc.?.strsize == 0) {
         try writer.writeAll("\nNo string table found in the object file.\n");
         return;
@@ -2739,7 +2717,7 @@ pub fn printStringTable(self: ZachO, writer: anytype) !void {
     }
 }
 
-pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
+pub fn printIndirectSymbolTable(self: Object, writer: anytype) !void {
     if (self.dysymtab_lc == null or self.dysymtab_lc.?.nindirectsyms == 0) {
         try writer.writeAll("\nNo indirect symbol table found in the object file.\n");
         return;
@@ -2784,7 +2762,7 @@ pub fn printIndirectSymbolTable(self: ZachO, writer: anytype) !void {
     }
 }
 
-pub fn printDataInCode(self: ZachO, writer: anytype) !void {
+pub fn printDataInCode(self: Object, writer: anytype) !void {
     const lc = self.data_in_code_lc orelse {
         try writer.writeAll("\nNo data-in-code entries found in the object file.\n");
         return;
@@ -2825,7 +2803,7 @@ pub fn printDataInCode(self: ZachO, writer: anytype) !void {
     }
 }
 
-fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
+fn getLoadCommandsIterator(self: Object) macho.LoadCommandIterator {
     const data = self.data[@sizeOf(macho.mach_header_64)..][0..self.header.sizeofcmds];
     return .{
         .ncmds = self.header.ncmds,
@@ -2833,7 +2811,7 @@ fn getLoadCommandsIterator(self: ZachO) macho.LoadCommandIterator {
     };
 }
 
-fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
+fn findSymbolByAddress(self: *const Object, addr: u64) ?macho.nlist_64 {
     for (self.sorted_symtab.items) |idx| {
         const sym = idx.getSymbol(self);
         if (sym.n_value <= addr and addr < sym.n_value + idx.size) return sym;
@@ -2841,12 +2819,12 @@ fn findSymbolByAddress(self: *const ZachO, addr: u64) ?macho.nlist_64 {
     return null;
 }
 
-fn getString(self: *const ZachO, off: u32) []const u8 {
+fn getString(self: *const Object, off: u32) []const u8 {
     assert(off < self.strtab.len);
     return mem.sliceTo(@as([*:0]const u8, @ptrCast(self.strtab.ptr + off)), 0);
 }
 
-fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?macho.section_64 {
+fn getSectionByName(self: Object, segname: []const u8, sectname: []const u8) ?macho.section_64 {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
@@ -2861,7 +2839,7 @@ fn getSectionByName(self: ZachO, segname: []const u8, sectname: []const u8) ?mac
     return null;
 }
 
-fn getSectionByAddress(self: ZachO, addr: u64) ?macho.section_64 {
+fn getSectionByAddress(self: Object, addr: u64) ?macho.section_64 {
     var it = self.getLoadCommandsIterator();
     const lc = while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
@@ -2880,7 +2858,7 @@ fn getSectionByAddress(self: ZachO, addr: u64) ?macho.section_64 {
     return sect;
 }
 
-fn getSectionByIndex(self: ZachO, index: u8) macho.section_64 {
+fn getSectionByIndex(self: Object, index: u8) macho.section_64 {
     var count: u8 = 1;
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -2900,7 +2878,7 @@ fn getSectionByIndex(self: ZachO, index: u8) macho.section_64 {
     } else unreachable;
 }
 
-fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
+fn getGotPointerAtIndex(self: Object, index: usize) u64 {
     const sect = self.getSectionByName("__DATA_CONST", "__got").?;
     const data = self.data[sect.offset..][0..sect.size];
     const ptr = @as(*align(1) const u64, @ptrCast(data[index * 8 ..])).*;
@@ -2924,7 +2902,7 @@ fn getGotPointerAtIndex(self: ZachO, index: usize) u64 {
     }
 }
 
-fn getSegmentByName(self: ZachO, segname: []const u8) ?macho.segment_command_64 {
+fn getSegmentByName(self: Object, segname: []const u8) ?macho.segment_command_64 {
     for (self.segments.items) |seg| {
         if (mem.eql(u8, segname, seg.segName())) {
             return seg;
@@ -2933,7 +2911,7 @@ fn getSegmentByName(self: ZachO, segname: []const u8) ?macho.segment_command_64 
     return null;
 }
 
-fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
+fn getSegmentByAddress(self: Object, addr: u64) ?macho.segment_command_64 {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
@@ -2946,7 +2924,7 @@ fn getSegmentByAddress(self: ZachO, addr: u64) ?macho.segment_command_64 {
     } else return null;
 }
 
-fn sliceContentsByAddress(self: ZachO, addr: u64, size: u64) ?[]const u8 {
+fn sliceContentsByAddress(self: Object, addr: u64, size: u64) ?[]const u8 {
     var it = self.getLoadCommandsIterator();
     const lc = while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
@@ -2967,7 +2945,7 @@ fn sliceContentsByAddress(self: ZachO, addr: u64, size: u64) ?[]const u8 {
     return self.data[offset..][0..size];
 }
 
-fn getDylibByIndex(self: ZachO, index: u16) macho.LoadCommandIterator.LoadCommand {
+fn getDylibByIndex(self: Object, index: u16) macho.LoadCommandIterator.LoadCommand {
     var count: u16 = 1;
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -2983,7 +2961,7 @@ fn getDylibByIndex(self: ZachO, index: u16) macho.LoadCommandIterator.LoadComman
     } else unreachable;
 }
 
-fn getDylibNameByIndex(self: ZachO, index: u16) []const u8 {
+fn getDylibNameByIndex(self: Object, index: u16) []const u8 {
     const dylib = self.getDylibByIndex(index);
     const full_path = dylib.getDylibPathName();
     const leaf_path = std.fs.path.basename(full_path);
@@ -3198,7 +3176,7 @@ const SymbolAtIndex = struct {
     index: u32,
     size: u64,
 
-    const Context = *const ZachO;
+    const Context = *const Object;
 
     fn getSymbol(self: SymbolAtIndex, ctx: Context) macho.nlist_64 {
         return ctx.symtab[self.index];
@@ -3241,3 +3219,17 @@ const Arch = enum {
     x86_64,
     unknown,
 };
+
+const Object = @This();
+
+const std = @import("std");
+const builtin = @import("builtin");
+const assert = std.debug.assert;
+const fs = std.fs;
+const io = std.io;
+const mem = std.mem;
+const macho = std.macho;
+
+const Allocator = std.mem.Allocator;
+const ZigKit = @import("ZigKit");
+const CMSDecoder = ZigKit.Security.CMSDecoder;

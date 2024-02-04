@@ -1,5 +1,8 @@
+const fat = @import("fat.zig");
 const std = @import("std");
-const ZachO = @import("ZachO.zig");
+
+const Archive = @import("Archive.zig");
+const Object = @import("Object.zig");
 
 var allocator = std.heap.GeneralPurposeAllocator(.{}){};
 const gpa = allocator.allocator();
@@ -18,6 +21,7 @@ const usage =
     \\-s, --symbol-table          Print the symbol table
     \\-u, --unwind-info           Print the contents of (compact) unwind info section (if any)
     \\-v, --verbose               Print more detailed info for each flag
+    \\--archive-index             Print archive index (if any)
     \\--string-table              Print the string table
     \\--data-in-code              Print data-in-code entries (if any)
     \\--verify-memory-layout      Print virtual memory layout and verify there is no overlap
@@ -110,6 +114,8 @@ pub fn main() !void {
             print_matrix.unwind_info = true;
         } else if (std.mem.eql(u8, arg, "--string-table")) {
             print_matrix.string_table = true;
+        } else if (std.mem.eql(u8, arg, "--archive-index")) {
+            print_matrix.archive_index = true;
         } else if (std.mem.eql(u8, arg, "--data-in-code")) {
             print_matrix.data_in_code = true;
         } else if (std.mem.eql(u8, arg, "--verify-memory-layout")) {
@@ -123,51 +129,74 @@ pub fn main() !void {
     }
 
     const fname = filename orelse fatal("no input file specified", .{});
-
-    if (print_matrix.isUnset()) fatal("no option specified", .{});
-
     const file = try std.fs.cwd().openFile(fname, .{});
     defer file.close();
     const data = try file.readToEndAlloc(arena, std.math.maxInt(u32));
 
-    var zacho = try ZachO.parse(arena, data, opts.verbose);
     const stdout = std.io.getStdOut().writer();
+    if (print_matrix.isUnset()) fatal("no option specified", .{});
 
+    if (try fat.isFatLibrary(fname)) {
+        fatal("TODO: handle fat (universal) files: {s} is a fat file", .{fname});
+    } else if (try Archive.isArchive(fname, null)) {
+        var archive = Archive{ .gpa = gpa, .data = data, .path = try gpa.dupe(u8, fname), .verbose = opts.verbose };
+        defer archive.deinit();
+        try archive.parse();
+        if (print_matrix.archive_index) {
+            try archive.printSymbolTable(stdout);
+        }
+        print_matrix.archive_index = false;
+        if (!print_matrix.isUnset()) for (archive.objects.values()) |object| {
+            try stdout.print("File: {s}({s})\n", .{ archive.path, object.path });
+            try printObject(object, print_matrix, stdout);
+        };
+    } else {
+        var object = Object{ .gpa = gpa, .data = data, .path = try gpa.dupe(u8, fname), .verbose = opts.verbose };
+        defer object.deinit();
+        object.parse() catch |err| switch (err) {
+            error.InvalidMagic => fatal("not a MachO file - invalid magic bytes", .{}),
+            else => |e| return e,
+        };
+        try printObject(object, print_matrix, stdout);
+    }
+}
+
+fn printObject(object: Object, print_matrix: PrintMatrix, stdout: anytype) !void {
     if (print_matrix.header) {
-        try zacho.printHeader(stdout);
+        try object.printHeader(stdout);
     }
     if (print_matrix.load_commands) {
-        try zacho.printLoadCommands(stdout);
+        try object.printLoadCommands(stdout);
     }
     if (print_matrix.dyld_info) {
-        try zacho.printDyldInfo(stdout);
+        try object.printDyldInfo(stdout);
     }
     if (print_matrix.exports_trie) {
-        try zacho.printExportsTrie(stdout);
+        try object.printExportsTrie(stdout);
     }
     if (print_matrix.unwind_info) {
-        try zacho.printUnwindInfo(stdout);
+        try object.printUnwindInfo(stdout);
     }
     if (print_matrix.data_in_code) {
-        try zacho.printDataInCode(stdout);
+        try object.printDataInCode(stdout);
     }
     if (print_matrix.code_signature) {
-        try zacho.printCodeSignature(stdout);
+        try object.printCodeSignature(stdout);
     }
     if (print_matrix.verify_memory_layout) {
-        try zacho.verifyMemoryLayout(stdout);
+        try object.verifyMemoryLayout(stdout);
     }
     if (print_matrix.relocations) {
-        try zacho.printRelocations(stdout);
+        try object.printRelocations(stdout);
     }
     if (print_matrix.symbol_table) {
-        try zacho.printSymbolTable(stdout);
+        try object.printSymbolTable(stdout);
     }
     if (print_matrix.string_table) {
-        try zacho.printStringTable(stdout);
+        try object.printStringTable(stdout);
     }
     if (print_matrix.indirect_symbol_table) {
-        try zacho.printIndirectSymbolTable(stdout);
+        try object.printIndirectSymbolTable(stdout);
     }
 }
 
@@ -188,6 +217,7 @@ const PrintMatrix = packed struct {
     indirect_symbol_table: bool = false,
     data_in_code: bool = false,
     string_table: bool = false,
+    archive_index: bool = false,
 
     const Int = blk: {
         const bits = @typeInfo(@This()).Struct.fields.len;
