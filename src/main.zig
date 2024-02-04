@@ -1,4 +1,7 @@
+const fat = @import("fat.zig");
 const std = @import("std");
+
+const Archive = @import("Archive.zig");
 const Object = @import("Object.zig");
 
 var allocator = std.heap.GeneralPurposeAllocator(.{}){};
@@ -123,16 +126,28 @@ pub fn main() !void {
     }
 
     const fname = filename orelse fatal("no input file specified", .{});
-
-    if (print_matrix.isUnset()) fatal("no option specified", .{});
-
     const file = try std.fs.cwd().openFile(fname, .{});
     defer file.close();
     const data = try file.readToEndAlloc(arena, std.math.maxInt(u32));
 
-    var object = try Object.parse(arena, data, opts.verbose);
     const stdout = std.io.getStdOut().writer();
+    if (print_matrix.isUnset()) fatal("no option specified", .{});
 
+    if (try fat.isFatLibrary(fname)) {
+        fatal("TODO: handle fat (universal) files: {s} is a fat file", .{fname});
+    } else if (try Archive.isArchive(fname, null)) {
+        fatal("TODO: handle archives: {s} is an archive", .{fname});
+    } else {
+        var object = Object{ .gpa = gpa, .data = data, .path = fname, .verbose = opts.verbose };
+        object.parse() catch |err| switch (err) {
+            error.InvalidMagic => fatal("not a MachO file - invalid magic bytes", .{}),
+            else => |e| return e,
+        };
+        try printObject(object, print_matrix, stdout);
+    }
+}
+
+fn printObject(object: Object, print_matrix: PrintMatrix, stdout: anytype) !void {
     if (print_matrix.header) {
         try object.printHeader(stdout);
     }

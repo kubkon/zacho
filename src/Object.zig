@@ -1,22 +1,10 @@
-const Object = @This();
-
-const std = @import("std");
-const builtin = @import("builtin");
-const assert = std.debug.assert;
-const fs = std.fs;
-const io = std.io;
-const mem = std.mem;
-const macho = std.macho;
-
-const Allocator = std.mem.Allocator;
-const ZigKit = @import("ZigKit");
-const CMSDecoder = ZigKit.Security.CMSDecoder;
-
 gpa: Allocator,
-arch: Arch,
-header: macho.mach_header_64,
-segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
 data: []const u8,
+path: []const u8,
+
+arch: Arch = undefined,
+header: macho.mach_header_64 = undefined,
+segments: std.ArrayListUnmanaged(macho.segment_command_64) = .{},
 
 symtab: []align(1) const macho.nlist_64 = &[0]macho.nlist_64{},
 sorted_symtab: std.ArrayListUnmanaged(SymbolAtIndex) = .{},
@@ -37,15 +25,7 @@ pub fn deinit(self: *Object) void {
     self.sorted_symtab.deinit(self.gpa);
 }
 
-pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !Object {
-    var self = Object{
-        .gpa = gpa,
-        .arch = undefined,
-        .header = undefined,
-        .data = data,
-        .verbose = verbose,
-    };
-
+pub fn parse(self: *Object) !void {
     var stream = std.io.fixedBufferStream(self.data);
     const reader = stream.reader();
     const header = try reader.readStruct(macho.mach_header_64);
@@ -63,7 +43,7 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !Object {
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
             const cmd = lc.cast(macho.segment_command_64).?;
-            try self.segments.append(gpa, cmd);
+            try self.segments.append(self.gpa, cmd);
         },
         .SYMTAB => self.symtab_lc = lc.cast(macho.symtab_command).?,
         .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
@@ -84,17 +64,17 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !Object {
             self.sorted_symtab.appendAssumeCapacity(.{ .index = @intCast(idx), .size = 0 });
         }
 
-        mem.sort(SymbolAtIndex, self.sorted_symtab.items, &self, SymbolAtIndex.lessThan);
+        mem.sort(SymbolAtIndex, self.sorted_symtab.items, self, SymbolAtIndex.lessThan);
 
         // Remove duplicates
         var i: usize = 0;
         while (i < self.sorted_symtab.items.len) : (i += 1) {
             const start = i;
-            const curr = self.sorted_symtab.items[start].getSymbol(&self);
+            const curr = self.sorted_symtab.items[start].getSymbol(self);
 
             while (i < self.sorted_symtab.items.len and
-                self.sorted_symtab.items[i].getSymbol(&self).n_sect == curr.n_sect and
-                self.sorted_symtab.items[i].getSymbol(&self).n_value == curr.n_value) : (i += 1)
+                self.sorted_symtab.items[i].getSymbol(self).n_sect == curr.n_sect and
+                self.sorted_symtab.items[i].getSymbol(self).n_value == curr.n_value) : (i += 1)
             {}
 
             for (1..i - start) |j| {
@@ -106,18 +86,16 @@ pub fn parse(gpa: Allocator, data: []const u8, verbose: bool) !Object {
         // Estimate symbol sizes
         i = 0;
         while (i < self.sorted_symtab.items.len) : (i += 1) {
-            const curr = self.sorted_symtab.items[i].getSymbol(&self);
+            const curr = self.sorted_symtab.items[i].getSymbol(self);
             const sect = self.getSectionByIndex(curr.n_sect);
             const end = if (i + 1 < self.sorted_symtab.items.len)
-                self.sorted_symtab.items[i + 1].getSymbol(&self).n_value
+                self.sorted_symtab.items[i + 1].getSymbol(self).n_value
             else
                 sect.addr + sect.size;
             const size = end - curr.n_value;
             self.sorted_symtab.items[i].size = size;
         }
     }
-
-    return self;
 }
 
 pub fn printHeader(self: Object, writer: anytype) !void {
@@ -3241,3 +3219,17 @@ const Arch = enum {
     x86_64,
     unknown,
 };
+
+const Object = @This();
+
+const std = @import("std");
+const builtin = @import("builtin");
+const assert = std.debug.assert;
+const fs = std.fs;
+const io = std.io;
+const mem = std.mem;
+const macho = std.macho;
+
+const Allocator = std.mem.Allocator;
+const ZigKit = @import("ZigKit");
+const CMSDecoder = ZigKit.Security.CMSDecoder;
