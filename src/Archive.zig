@@ -4,7 +4,6 @@ path: []const u8,
 
 objects: std.AutoArrayHashMapUnmanaged(u64, Object) = .{},
 symtab: Symtab = .{},
-strtab: []const u8 = &[0]u8{},
 
 verbose: bool = false,
 
@@ -54,7 +53,9 @@ pub fn parse(self: *Archive) !void {
             mem.eql(u8, name, SYMDEF_SORTED) or
             mem.eql(u8, name, SYMDEF64_SORTED))
         {
-            // TODO
+            const is_64 = mem.eql(u8, name, SYMDEF64) or mem.eql(u8, name, SYMDEF64_SORTED);
+            if (is_64) self.symtab.format = .p64;
+            try self.symtab.parse(self.gpa, self.data[stream.pos..][0..size]);
             continue;
         }
 
@@ -76,10 +77,7 @@ pub fn printSymbolTable(self: Archive, writer: anytype) !void {
         return writer.writeAll("no index found in archive\n");
     }
 
-    var size_in_symtab: usize = 0;
-    for (self.symtab.entries.items) |entry| {
-        size_in_symtab += entry.name.len + 1;
-    }
+    const size_in_symtab: usize = self.symtab.entries.items.len * 2 * self.symtab.ptrWidth();
     try writer.print("Index of archive {s}: ({d} entries, 0x{x} bytes in the symbol table)\n", .{
         self.path,
         self.symtab.entries.items.len,
@@ -106,15 +104,9 @@ pub fn printSymbolTable(self: Archive, writer: anytype) !void {
         const object = self.objects.get(file).?;
         try writer.print("Contents of binary {s}({s}) at offset 0x{x}\n", .{ self.path, object.path, file });
         for (indexes.items) |index| {
-            try writer.print("      {s}\n", .{self.symtab.entries.items[index].name});
+            try writer.print("      {s}\n", .{self.symtab.entries.items[index].getName(&self.symtab)});
         }
     }
-}
-
-fn getString(self: Archive, off: u32) []const u8 {
-    assert(off < self.strtab.len);
-    const name = mem.sliceTo(@as([*:'\n']const u8, @ptrCast(self.strtab.ptr + off)), 0);
-    return name[0 .. name.len - 1];
 }
 
 const ar_hdr = extern struct {
@@ -217,12 +209,10 @@ const ar_hdr = extern struct {
 
 const Symtab = struct {
     entries: std.ArrayListUnmanaged(Entry) = .{},
+    strtab: []const u8 = &[0]u8{},
     format: enum { p32, p64 } = .p32,
 
     fn deinit(ar: *Symtab, gpa: Allocator) void {
-        for (ar.entries.items) |*entry| {
-            gpa.free(entry.name);
-        }
         ar.entries.deinit(gpa);
     }
 
@@ -237,39 +227,42 @@ const Symtab = struct {
         var stream = std.io.fixedBufferStream(data);
         const reader = stream.reader();
 
-        const num = try ar.readInt(reader);
+        const size = try ar.readInt(reader);
+        const num = @divExact(size, ar.ptrWidth() * 2);
         try ar.entries.ensureTotalCapacityPrecise(gpa, num);
 
         for (0..num) |_| {
+            const name = try ar.readInt(reader);
             const file = try ar.readInt(reader);
-            ar.entries.appendAssumeCapacity(.{ .name = undefined, .file = file });
+            ar.entries.appendAssumeCapacity(.{ .name = name, .file = file });
         }
 
-        const strtab_off = (num + 1) * ar.ptrWidth();
-        const strtab_len = data.len - strtab_off;
-        const strtab = data[strtab_off..];
-
-        var next: usize = 0;
-        var i: usize = 0;
-        while (i < strtab_len) : (next += 1) {
-            const name = mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab.ptr + i)), 0);
-            ar.entries.items[next].name = try gpa.dupe(u8, name);
-            i += name.len + 1;
-        }
+        const strtab_off = size + ar.ptrWidth();
+        const strtab_len = try ar.readInt(reader);
+        ar.strtab = data[strtab_off + ar.ptrWidth() ..][0..strtab_len];
     }
 
     fn readInt(ar: Symtab, reader: anytype) !u64 {
         return switch (ar.format) {
-            .p32 => @as(u64, @intCast(try reader.readInt(u32, .big))),
-            .p64 => try reader.readInt(u64, .big),
+            .p32 => @as(u64, @intCast(try reader.readInt(u32, .little))),
+            .p64 => try reader.readInt(u64, .little),
         };
     }
 
+    fn getString(ar: *const Symtab, off: u64) [:0]const u8 {
+        assert(off < ar.strtab.len);
+        return mem.sliceTo(@as([*:0]const u8, @ptrCast(ar.strtab.ptr + off)), 0);
+    }
+
     const Entry = struct {
-        /// Symbol name
-        name: []const u8,
+        /// Symbol name offset
+        name: u64,
         /// Offset of the object file.
         file: u64,
+
+        fn getName(entry: Entry, ctx: *const Symtab) [:0]const u8 {
+            return ctx.getString(entry.name);
+        }
     };
 };
 
