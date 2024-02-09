@@ -2393,12 +2393,13 @@ pub fn verifyMemoryLayout(self: Object, writer: anytype) !void {
         if (sections.get(seg_id)) |headers| {
             try writer.writeByte('\n');
             for (headers.items, 0..) |header, header_id| {
+                if (header.isZerofill()) continue;
                 try writer.print("    {s: >20} -------- {x}\n", .{ header.sectName(), header.offset });
                 try writer.print("    {s: >20} |\n", .{""});
                 try writer.print("    {s: >20} -------- {x}\n", .{ "", header.offset + header.size });
                 if (header_id < headers.items.len - 1) {
                     const next_header = headers.items[header_id + 1];
-                    if (next_header.offset < header.offset + header.size) {
+                    if (next_header.offset < header.offset + header.size and !next_header.isZerofill()) {
                         try writer.writeAll("      CURRENT SECTION OVERLAPS THE NEXT ONE\n");
                     }
                 }
@@ -2413,7 +2414,7 @@ pub fn verifyMemoryLayout(self: Object, writer: anytype) !void {
         if (i < sorted_by_offset.items.len - 1) {
             const next_seg_id = sorted_by_offset.items[i + 1];
             const next_seg = segments.items[next_seg_id];
-            if (next_seg.fileoff < seg.fileoff + seg.filesize) {
+            if (next_seg.fileoff < seg.fileoff + seg.filesize and next_seg.filesize > 0) {
                 try writer.writeAll("    CURRENT SEGMENT OVERLAPS THE NEXT ONE\n");
             }
         }
