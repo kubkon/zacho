@@ -24,6 +24,8 @@ const usage =
     \\--archive-index             Print archive index (if any)
     \\--string-table              Print the string table
     \\--data-in-code              Print data-in-code entries (if any)
+    \\--hex-dump=[name]           Dump section contents as bytes
+    \\--string-dump=[name]        Dump section contents as strings
     \\--verify-memory-layout      Print virtual memory layout and verify there is no overlap
     \\--help                      Display this help and exit
     \\
@@ -36,23 +38,6 @@ fn fatal(comptime format: []const u8, args: anytype) noreturn {
     }
     std.process.exit(1);
 }
-
-const ArgsIterator = struct {
-    args: []const []const u8,
-    i: usize = 0,
-
-    fn next(it: *@This()) ?[]const u8 {
-        if (it.i >= it.args.len) {
-            return null;
-        }
-        defer it.i += 1;
-        return it.args[it.i];
-    }
-
-    fn nextOrFatal(it: *@This()) []const u8 {
-        return it.next() orelse fatal("expected parameter after {s}", .{it.args[it.i - 1]});
-    }
-};
 
 pub fn main() !void {
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
@@ -68,13 +53,15 @@ pub fn main() !void {
     var opts: Options = .{};
 
     var print_matrix: PrintMatrix = .{};
+    var sect_name: ?[]const u8 = null;
 
     var it = ArgsIterator{ .args = args };
-    while (it.next()) |arg| {
-        if (std.mem.startsWith(u8, arg, "-")) blk: {
+    var p = ArgsParser{ .it = &it };
+    while (p.hasMore()) {
+        if (std.mem.startsWith(u8, p.next_arg, "-")) blk: {
             var i: usize = 1;
             var tmp = PrintMatrix{};
-            while (i < arg.len) : (i += 1) switch (arg[i]) {
+            while (i < p.next_arg.len) : (i += 1) switch (p.next_arg[i]) {
                 '-' => break :blk,
                 'c' => tmp.code_signature = true,
                 'd' => tmp.dyld_info = true,
@@ -92,39 +79,45 @@ pub fn main() !void {
             continue;
         }
 
-        if (std.mem.eql(u8, arg, "--help")) {
+        if (p.flag2("help")) {
             fatal(usage, .{});
-        } else if (std.mem.eql(u8, arg, "--code-signature")) {
+        } else if (p.flag2("code-signature")) {
             print_matrix.code_signature = true;
-        } else if (std.mem.eql(u8, arg, "--dyld-info")) {
+        } else if (p.flag2("dyld-info")) {
             print_matrix.dyld_info = true;
-        } else if (std.mem.eql(u8, arg, "--exports-trie")) {
+        } else if (p.flag2("exports-trie")) {
             print_matrix.exports_trie = true;
-        } else if (std.mem.eql(u8, arg, "--header")) {
+        } else if (p.flag2("header")) {
             print_matrix.header = true;
-        } else if (std.mem.eql(u8, arg, "--load-commands")) {
+        } else if (p.flag2("load-commands")) {
             print_matrix.load_commands = true;
-        } else if (std.mem.eql(u8, arg, "--relocations")) {
+        } else if (p.flag2("relocations")) {
             print_matrix.relocations = true;
-        } else if (std.mem.eql(u8, arg, "--symbol-table")) {
+        } else if (p.flag2("symbol-table")) {
             print_matrix.symbol_table = true;
-        } else if (std.mem.eql(u8, arg, "--indirect-symbol-table")) {
+        } else if (p.flag2("indirect-symbol-table")) {
             print_matrix.indirect_symbol_table = true;
-        } else if (std.mem.eql(u8, arg, "--unwind-info")) {
+        } else if (p.flag2("unwind-info")) {
             print_matrix.unwind_info = true;
-        } else if (std.mem.eql(u8, arg, "--string-table")) {
+        } else if (p.flag2("string-table")) {
             print_matrix.string_table = true;
-        } else if (std.mem.eql(u8, arg, "--archive-index")) {
+        } else if (p.flag2("archive-index")) {
             print_matrix.archive_index = true;
-        } else if (std.mem.eql(u8, arg, "--data-in-code")) {
+        } else if (p.flag2("data-in-code")) {
             print_matrix.data_in_code = true;
-        } else if (std.mem.eql(u8, arg, "--verify-memory-layout")) {
+        } else if (p.arg2("hex-dump")) |name| {
+            print_matrix.dump_hex = true;
+            sect_name = name;
+        } else if (p.arg2("string-dump")) |name| {
+            print_matrix.dump_string = true;
+            sect_name = name;
+        } else if (p.flag2("verify-memory-layout")) {
             print_matrix.verify_memory_layout = true;
-        } else if (std.mem.eql(u8, arg, "--verbose")) {
+        } else if (p.flag2("verbose")) {
             opts.verbose = true;
         } else {
             if (filename != null) fatal("too many positional arguments specified", .{});
-            filename = arg;
+            filename = p.next_arg;
         }
     }
 
@@ -148,7 +141,7 @@ pub fn main() !void {
         print_matrix.archive_index = false;
         if (!print_matrix.isUnset()) for (archive.objects.values()) |object| {
             try stdout.print("File: {s}({s})\n", .{ archive.path, object.path });
-            try printObject(object, print_matrix, stdout);
+            try printObject(object, print_matrix, sect_name, stdout);
         };
     } else {
         var object = Object{ .gpa = gpa, .data = data, .path = try gpa.dupe(u8, fname), .verbose = opts.verbose };
@@ -157,11 +150,11 @@ pub fn main() !void {
             error.InvalidMagic => fatal("not a MachO file - invalid magic bytes", .{}),
             else => |e| return e,
         };
-        try printObject(object, print_matrix, stdout);
+        try printObject(object, print_matrix, sect_name, stdout);
     }
 }
 
-fn printObject(object: Object, print_matrix: PrintMatrix, stdout: anytype) !void {
+fn printObject(object: Object, print_matrix: PrintMatrix, sect_name: ?[]const u8, stdout: anytype) !void {
     if (print_matrix.header) {
         try object.printHeader(stdout);
     }
@@ -198,6 +191,27 @@ fn printObject(object: Object, print_matrix: PrintMatrix, stdout: anytype) !void
     if (print_matrix.indirect_symbol_table) {
         try object.printIndirectSymbolTable(stdout);
     }
+    if (print_matrix.dump_string or print_matrix.dump_hex) {
+        const sect = getSectionByName(object, sect_name.?) catch |err| switch (err) {
+            error.InvalidSectionName => fatal("invalid section name: '{s}'", .{sect_name.?}),
+            error.SectionNotFound => fatal("section not found: '{s}'", .{sect_name.?}),
+        };
+        if (print_matrix.dump_string) {
+            try object.dumpString(sect, stdout);
+        }
+        if (print_matrix.dump_hex) {
+            try object.dumpHex(sect, stdout);
+        }
+    }
+}
+
+fn getSectionByName(object: Object, name: []const u8) !std.macho.section_64 {
+    const index = std.mem.indexOfScalar(u8, name, ',') orelse return error.InvalidSectionName;
+    if (index + 1 >= name.len) return error.InvalidSectionName;
+    const seg_name = name[0..index];
+    const sect_name = name[index + 1 ..];
+    const sect = object.getSectionByName(seg_name, sect_name) orelse return error.SectionNotFound;
+    return sect;
 }
 
 pub const Options = struct {
@@ -218,6 +232,8 @@ const PrintMatrix = packed struct {
     data_in_code: bool = false,
     string_table: bool = false,
     archive_index: bool = false,
+    dump_string: bool = false,
+    dump_hex: bool = false,
 
     const Int = blk: {
         const bits = @typeInfo(@This()).Struct.fields.len;
@@ -239,5 +255,82 @@ const PrintMatrix = packed struct {
 
     fn add(pm: *@This(), other: @This()) void {
         pm.* = @as(@This(), @bitCast(@as(Int, @bitCast(pm.*)) | @as(Int, @bitCast(other))));
+    }
+};
+
+const ArgsIterator = struct {
+    args: []const []const u8,
+    i: usize = 0,
+
+    fn next(it: *@This()) ?[]const u8 {
+        if (it.i >= it.args.len) {
+            return null;
+        }
+        defer it.i += 1;
+        return it.args[it.i];
+    }
+
+    fn nextOrFatal(it: *@This()) []const u8 {
+        return it.next() orelse fatal("expected parameter after {s}", .{it.args[it.i - 1]});
+    }
+
+    pub fn peek(it: *@This()) ?[]const u8 {
+        const arg = it.next();
+        defer if (it.i > 0) {
+            it.i -= 1;
+        };
+        return arg;
+    }
+};
+
+const ArgsParser = struct {
+    next_arg: []const u8 = undefined,
+    it: *ArgsIterator,
+
+    pub fn hasMore(p: *ArgsParser) bool {
+        p.next_arg = p.it.next() orelse return false;
+        return true;
+    }
+
+    pub fn flag1(p: *ArgsParser, comptime pat: []const u8) bool {
+        return p.flagPrefix(pat, "-");
+    }
+
+    pub fn flag2(p: *ArgsParser, comptime pat: []const u8) bool {
+        return p.flagPrefix(pat, "--");
+    }
+
+    fn flagPrefix(p: *ArgsParser, comptime pat: []const u8, comptime prefix: []const u8) bool {
+        if (std.mem.startsWith(u8, p.next_arg, prefix)) {
+            const actual_arg = p.next_arg[prefix.len..];
+            if (std.mem.eql(u8, actual_arg, pat)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn arg1(p: *ArgsParser, comptime pat: []const u8) ?[]const u8 {
+        return p.argPrefix(pat, "-");
+    }
+
+    pub fn arg2(p: *ArgsParser, comptime pat: []const u8) ?[]const u8 {
+        return p.argPrefix(pat, "--");
+    }
+
+    fn argPrefix(p: *ArgsParser, comptime pat: []const u8, comptime prefix: []const u8) ?[]const u8 {
+        if (std.mem.startsWith(u8, p.next_arg, prefix)) {
+            const actual_arg = p.next_arg[prefix.len..];
+            if (std.mem.eql(u8, actual_arg, pat)) {
+                if (p.it.peek()) |next| {
+                    if (std.mem.startsWith(u8, next, "-")) return null;
+                }
+                return p.it.nextOrFatal();
+            }
+            if (std.mem.startsWith(u8, actual_arg, pat)) {
+                return actual_arg[pat.len..];
+            }
+        }
+        return null;
     }
 };

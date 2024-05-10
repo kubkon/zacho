@@ -98,6 +98,29 @@ pub fn parse(self: *Object) !void {
     }
 }
 
+pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
+    const data = self.data[sect.offset..][0..sect.size];
+    var start: usize = 0;
+    while (start < data.len) {
+        try writer.print("  [{x: >6}]  ", .{start});
+        var end = start;
+        while (end < data.len - 1 and data[end] != 0) : (end += 1) {}
+        if (data[end] != 0) {
+            @panic("string not null terminated");
+        }
+        end += 1;
+        const string = data[start..end];
+        try writer.print("{s}\n", .{std.fmt.fmtSliceEscapeLower(string)});
+        start = end;
+    }
+}
+
+pub fn dumpHex(self: Object, sect: macho.section_64, writer: anytype) !void {
+    _ = self;
+    _ = sect;
+    _ = writer;
+}
+
 pub fn printHeader(self: Object, writer: anytype) !void {
     const header = self.header;
 
@@ -2825,7 +2848,7 @@ fn getString(self: *const Object, off: u32) []const u8 {
     return mem.sliceTo(@as([*:0]const u8, @ptrCast(self.strtab.ptr + off)), 0);
 }
 
-fn getSectionByName(self: Object, segname: []const u8, sectname: []const u8) ?macho.section_64 {
+pub fn getSectionByName(self: Object, segname: []const u8, sectname: []const u8) ?macho.section_64 {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .SEGMENT_64 => {
