@@ -24,13 +24,14 @@ General options:
 -s, --symbol-table          Print the symbol table
 -u, --unwind-info           Print the contents of (compact) unwind info section (if any)
 -v, --verbose               Print more detailed info for each flag
+--archive-index             Print archive index (if any)
+--string-table              Print the string table
+--data-in-code              Print data-in-code entries (if any)
+--hex-dump=[name]           Dump section contents as bytes
+--string-dump=[name]        Dump section contents as strings
 --verify-memory-layout      Print virtual memory layout and verify there is no overlap
 --help                      Display this help and exit
 ```
-
-Currently, `zacho` will let you print parsed Mach-O header, and print formatted load commands.
-I should point here out that I'm basing the flags on `otool` so if you're familiar with those,
-`zacho` should feel like second home to you.
 
 ## Building from source
 
