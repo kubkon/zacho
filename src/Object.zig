@@ -99,6 +99,7 @@ pub fn parse(self: *Object) !void {
 }
 
 pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
+    try writer.print("String dump of section '{s},{s}':\n", .{ sect.segName(), sect.sectName() });
     const data = self.data[sect.offset..][0..sect.size];
     var start: usize = 0;
     while (start < data.len) {
@@ -116,9 +117,31 @@ pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
 }
 
 pub fn dumpHex(self: Object, sect: macho.section_64, writer: anytype) !void {
-    _ = self;
-    _ = sect;
-    _ = writer;
+    try writer.print("Hex dump of section '{s},{s}':\n", .{ sect.segName(), sect.sectName() });
+    const data = self.data[sect.offset..][0..sect.size];
+    try fmtBlobHex(data, writer);
+}
+
+// Format as 4 hex columns and 1 ascii column.
+// xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+fn fmtBlobHex(blob: []const u8, writer: anytype) !void {
+    const step = 16;
+    var hex_buf: [step]u8 = undefined;
+    var str_buf: [step]u8 = undefined;
+    var i: usize = 0;
+    while (i < blob.len) : (i += step) {
+        try writer.print("  0x{x:0>8} ", .{i});
+        const end = if (blob[i..].len >= step) step else blob[i..].len;
+        @memset(&hex_buf, 0);
+        @memcpy(hex_buf[0..end], blob[i .. i + end]);
+        var j: usize = 0;
+        while (j < step) : (j += 4) {
+            try writer.print("{x:<8} ", .{std.fmt.fmtSliceHexLower(hex_buf[j .. j + 4])});
+        }
+        _ = try std.fmt.bufPrint(&str_buf, "{s}", .{&hex_buf});
+        std.mem.replaceScalar(u8, &str_buf, 0, '.');
+        try writer.print("{s}\n", .{std.fmt.fmtSliceEscapeLower(&str_buf)});
+    }
 }
 
 pub fn printHeader(self: Object, writer: anytype) !void {
