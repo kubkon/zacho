@@ -77,8 +77,8 @@ pub fn parse(self: *Object) !void {
                 self.sorted_symtab.items[i].getSymbol(self).n_value == curr.n_value) : (i += 1)
             {}
 
-            for (1..i - start) |j| {
-                _ = self.sorted_symtab.orderedRemove(start + j);
+            for (1..i - start) |_| {
+                _ = self.sorted_symtab.orderedRemove(start + 1);
             }
             i = start;
         }
