@@ -123,7 +123,10 @@ pub fn main() !void {
     }
 
     const fname = filename orelse fatal("no input file specified", .{});
-    const file = try std.fs.cwd().openFile(fname, .{});
+    const file = std.fs.cwd().openFile(fname, .{}) catch |err| switch (err) {
+        error.FileNotFound => fatal("file not found: {s}", .{fname}),
+        else => |e| fatal("unexpected error occurred: {s}", .{@errorName(e)}),
+    };
     defer file.close();
     const data = try file.readToEndAlloc(arena, std.math.maxInt(u32));
 
