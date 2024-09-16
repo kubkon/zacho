@@ -12,8 +12,9 @@ const usage =
     \\
     \\General options:
     \\-c, --code-signature        Print the contents of code signature (if any)
-    \\-d, --dyld-info             Print the contents of dyld rebase and bind opcodes
+    \\-d, --dyld-info             Print the contents of dyld rebase and bind opcodes (if any)
     \\-e, --exports-trie          Print export trie (if any)
+    \\-f, --chained-fixups        Print fixup chains (if any)
     \\-h, --header                Print the Mach-O header
     \\-i, --indirect-symbol-table Print the indirect symbol table
     \\-l, --load-commands         Print load commands
@@ -66,6 +67,7 @@ pub fn main() !void {
                 'c' => tmp.code_signature = true,
                 'd' => tmp.dyld_info = true,
                 'e' => tmp.exports_trie = true,
+                'f' => tmp.chained_fixups = true,
                 'h' => tmp.header = true,
                 'i' => tmp.indirect_symbol_table = true,
                 'l' => tmp.load_commands = true,
@@ -83,6 +85,8 @@ pub fn main() !void {
             fatal(usage, .{});
         } else if (p.flag2("code-signature")) {
             print_matrix.code_signature = true;
+        } else if (p.flag2("chained-fixups")) {
+            print_matrix.chained_fixups = true;
         } else if (p.flag2("dyld-info")) {
             print_matrix.dyld_info = true;
         } else if (p.flag2("exports-trie")) {
@@ -168,6 +172,9 @@ fn printObject(object: Object, print_matrix: PrintMatrix, sect_name: ?[]const u8
     if (print_matrix.dyld_info) {
         try object.printDyldInfo(stdout);
     }
+    if (print_matrix.chained_fixups) {
+        try object.printChainedFixups(stdout);
+    }
     if (print_matrix.exports_trie) {
         try object.printExportsTrie(stdout);
     }
@@ -227,6 +234,7 @@ const PrintMatrix = packed struct {
     load_commands: bool = false,
     dyld_info: bool = false,
     exports_trie: bool = false,
+    chained_fixups: bool = false,
     unwind_info: bool = false,
     code_signature: bool = false,
     verify_memory_layout: bool = false,

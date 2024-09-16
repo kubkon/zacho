@@ -14,6 +14,7 @@ dysymtab_lc: ?macho.dysymtab_command = null,
 
 dyld_info_only_lc: ?macho.dyld_info_command = null,
 dyld_exports_trie_lc: ?macho.linkedit_data_command = null,
+dyld_chained_fixups_lc: ?macho.linkedit_data_command = null,
 
 data_in_code_lc: ?macho.linkedit_data_command = null,
 
@@ -49,6 +50,7 @@ pub fn parse(self: *Object) !void {
         .DYSYMTAB => self.dysymtab_lc = lc.cast(macho.dysymtab_command).?,
         .DYLD_INFO_ONLY => self.dyld_info_only_lc = lc.cast(macho.dyld_info_command).?,
         .DYLD_EXPORTS_TRIE => self.dyld_exports_trie_lc = lc.cast(macho.linkedit_data_command).?,
+        .DYLD_CHAINED_FIXUPS => self.dyld_chained_fixups_lc = lc.cast(macho.linkedit_data_command).?,
         .DATA_IN_CODE => self.data_in_code_lc = lc.cast(macho.linkedit_data_command).?,
         else => {},
     };
@@ -254,6 +256,8 @@ pub fn printLoadCommands(self: Object, writer: anytype) !void {
             .LINKER_OPTIMIZATION_HINT,
             .DYLIB_CODE_SIGN_DRS,
             .SEGMENT_SPLIT_INFO,
+            .DYLD_CHAINED_FIXUPS,
+            .DYLD_EXPORTS_TRIE,
             => try printLinkeditDataLC(fmt, lc, writer),
             .SYMTAB => try printSymtabLC(fmt, lc, writer),
             .DYSYMTAB => try printDysymtabLC(fmt, lc, writer),
@@ -976,6 +980,11 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
             },
         }
     }
+}
+
+pub fn printChainedFixups(self: Object, writer: anytype) !void {
+    _ = self;
+    _ = writer;
 }
 
 pub fn printExportsTrie(self: Object, writer: anytype) !void {
