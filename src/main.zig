@@ -116,6 +116,7 @@ pub fn main() !void {
         } else if (p.flag2("verbose")) {
             opts.verbose = true;
         } else {
+            if (std.mem.startsWith(u8, p.next_arg, "-")) fatal("unknown option: {s}", .{p.next_arg});
             if (filename != null) fatal("too many positional arguments specified", .{});
             filename = p.next_arg;
         }
