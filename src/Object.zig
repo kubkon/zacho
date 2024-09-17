@@ -982,9 +982,120 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
     }
 }
 
+const dyld_chained_fixups_header = extern struct {
+    fixups_version: u32,
+    starts_offset: u32,
+    imports_offset: u32,
+    symbols_offset: u32,
+    imports_count: u32,
+    imports_format: dyld_chained_import_format,
+    symbols_format: dyld_chained_symbol_format,
+};
+
+const dyld_chained_import_format = enum(u32) {
+    import = 1,
+    import_addend = 2,
+    import_addend64 = 3,
+    _,
+};
+
+const dyld_chained_symbol_format = enum(u32) {
+    uncompressed = 0,
+    zlib = 1,
+};
+
+const dyld_chained_starts_in_image = extern struct {
+    seg_count: u32,
+    seg_info_count: [1]u32,
+};
+
+const dyld_chained_starts_in_segment = extern struct {
+    size: u32,
+    page_size: u32,
+    pointer_format: dyld_chained_ptr,
+    segment_offset: u64,
+    max_valid_pointer: u32,
+    page_count: u16,
+    page_start: [1]u16,
+};
+
+const dyld_chained_ptr_start = struct {
+    const none: u16 = 0xffff;
+    const multi: u16 = 0x8000;
+    const last: u16 = 0x8000;
+};
+
+const dyld_chained_ptr = enum(u16) {
+    arm64e = 1,
+    @"64" = 2,
+    @"32" = 3,
+    @"32_cache" = 4,
+    @"32_firmware" = 5,
+    @"64_offset" = 6,
+    arm64e_kernel = 7,
+    @"64_kernel_cache" = 8,
+    arm64e_userland = 9,
+    arm64_firmware = 10,
+    x86_64_kernel_cache = 11,
+    arm64e_userland24 = 12,
+};
+
+const dyld_chained_import = packed struct(u32) {
+    lib_ordinal: u8,
+    weak_import: bool,
+    name_offset: u23,
+};
+
+const dyld_chained_import_addend = extern struct {
+    hdr: packed struct(u32) {
+        lib_ordinal: u8,
+        weak_import: bool,
+        name_offset: u23,
+    },
+    addend: i32,
+};
+
+const dyld_chained_import_addend64 = extern struct {
+    hdr: packed struct(u64) {
+        lib_ordinal: u16,
+        weak_import: bool,
+        reserved: u15 = 0,
+        name_offset: u32,
+    },
+    addend: u64,
+};
+
+const dyld_chained_ptr_64_bind = packed struct(u64) {
+    ordinal: u24,
+    addend: u8,
+    reserved: u19 = 0,
+    next: u12,
+    bind: bool = true, // always set to true
+};
+
+const dyld_chained_ptr_64_rebase = packed struct(u64) {
+    target: u36,
+    high8: u8,
+    reserved: u7 = 0,
+    next: u12,
+    bind: bool = false, // always set to false
+};
+
 pub fn printChainedFixups(self: Object, writer: anytype) !void {
-    _ = self;
-    _ = writer;
+    const lc = self.dyld_chained_fixups_lc orelse
+        return writer.print("LC_DYLD_CHAINED_FIXUPS load command not found\n", .{});
+    const data = self.data[lc.dataoff..][0..lc.datasize];
+    const hdr = @as(*align(1) const dyld_chained_fixups_header, @ptrCast(data.ptr)).*;
+    try writer.writeAll("CHAINED FIXUPS HEADER:\n");
+    try writer.print("  fixups_version : {d}\n", .{hdr.fixups_version});
+    try writer.print("  starts_offset  : 0x{x} ({d})\n", .{ hdr.starts_offset, hdr.starts_offset });
+    try writer.print("  imports_offset : 0x{x} ({d})\n", .{ hdr.imports_offset, hdr.imports_offset });
+    try writer.print("  symbols_offset : 0x{x} ({d})\n", .{ hdr.symbols_offset, hdr.symbols_offset });
+    try writer.print("  imports_count  : {d}\n", .{hdr.imports_count});
+    try writer.print("  imports_format : {d} ({s})\n", .{ @as(u32, @intFromEnum(hdr.imports_format)), @tagName(hdr.imports_format) });
+    try writer.print("  symbols_format : {d} ({s})\n", .{ @as(u32, @intFromEnum(hdr.symbols_format)), @tagName(hdr.symbols_format) });
+
+    try writer.print("{x}\n", .{std.fmt.fmtSliceHexLower(data)});
 }
 
 pub fn printExportsTrie(self: Object, writer: anytype) !void {
