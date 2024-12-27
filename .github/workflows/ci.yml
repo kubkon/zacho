@@ -17,8 +17,8 @@ jobs:
     - uses: actions/checkout@v2
       with:
         submodules: true
-    - uses: goto-bus-stop/setup-zig@v1
+    - uses: mlugg/setup-zig@v1
       with:
-        version: master
+        version: 0.13.0
     - run: zig fmt --check src 
     - run: zig build install

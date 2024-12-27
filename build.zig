@@ -18,6 +18,10 @@ pub fn build(b: *std.Build) void {
             .optimize = mode,
         });
         exe.root_module.addImport("ZigKit", zig_kit.module("ZigKit"));
+
+        if (b.sysroot) |sysroot| {
+            exe.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "/System/Library/Frameworks" }) });
+        }
         exe.linkFramework("CoreFoundation");
         exe.linkFramework("Security");
     }
