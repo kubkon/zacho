@@ -240,9 +240,9 @@ const PrintMatrix = packed struct {
     dump_hex: bool = false,
 
     const Int = blk: {
-        const bits = @typeInfo(@This()).@"struct".fields.len;
+        const bits = @typeInfo(@This()).Struct.fields.len;
         break :blk @Type(.{
-            .int = .{
+            .Int = .{
                 .signedness = .unsigned,
                 .bits = bits,
             },

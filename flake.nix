@@ -37,7 +37,12 @@
       in rec {
         commonInputs = with pkgs; [
           zigpkgs."0.13.0"
-        ];
+        ] ++ darwinInputs;
+
+        darwinInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs; [
+          darwin.apple_sdk.frameworks.Security
+          darwin.apple_sdk.frameworks.Foundation
+        ]);
 
         packages.default = packages.zacho;
         packages.zacho = pkgs.stdenv.mkDerivation {
@@ -45,13 +50,12 @@
           version = "master";
           src = ./.;
           nativeBuildInputs = commonInputs;
-          buildInputs = commonInputs;
           dontConfigure = true;
           dontInstall = true;
           doCheck = false;
           buildPhase = ''
             mkdir -p .cache
-            zig build install -Doptimize=ReleaseSafe --prefix $out --cache-dir $(pwd)/.zig-cache --global-cache-dir $(pwd)/.cache 
+            zig build install --sysroot ${pkgs.darwin.apple_sdk} -Doptimize=ReleaseSafe --prefix $out --cache-dir $(pwd)/.zig-cache --global-cache-dir $(pwd)/.cache 
           '';
         };
 
