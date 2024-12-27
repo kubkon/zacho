@@ -35,7 +35,7 @@ General options:
 
 ## Building from source
 
-Building from source requires [Zig nightly](https://ziglang.org/download/).
+Building from source requires [Zig 0.13](https://ziglang.org/download/).
 
 ```
 $ git clone https://github.com/kubkon/zacho.git
