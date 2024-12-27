@@ -44,6 +44,8 @@
           darwin.apple_sdk.frameworks.Foundation
         ]);
 
+        sysroot = pkgs.lib.optionals pkgs.stdenv.isDarwin "--sysroot $SDKROOT";
+
         packages.default = packages.zacho;
         packages.zacho = pkgs.stdenv.mkDerivation {
           name = "zacho";
@@ -55,7 +57,7 @@
           doCheck = false;
           buildPhase = ''
             mkdir -p .cache
-            zig build install --sysroot ${pkgs.darwin.apple_sdk} -Doptimize=ReleaseSafe --prefix $out --cache-dir $(pwd)/.zig-cache --global-cache-dir $(pwd)/.cache 
+            zig build install ${sysroot} -Doptimize=ReleaseSafe --prefix $out --cache-dir $(pwd)/.zig-cache --global-cache-dir $(pwd)/.cache 
           '';
         };
 
