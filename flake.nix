@@ -14,7 +14,13 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, ... }@inputs:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      ...
+    }@inputs:
     let
       overlays = [
         # Other overlays
@@ -26,17 +32,24 @@
 
       # Our supported systems are the same supported systems as the Zig binaries
       systems = builtins.attrNames inputs.zig.packages;
-    in flake-utils.lib.eachSystem systems (system:
-      let pkgs = import nixpkgs { inherit overlays system; };
-      in rec {
+    in
+    flake-utils.lib.eachSystem systems (
+      system:
+      let
+        pkgs = import nixpkgs { inherit overlays system; };
+      in
+      rec {
         commonInputs = with pkgs; [ zigpkgs."0.13.0" ] ++ darwinInputs;
 
-        darwinInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs; [
-          darwin.apple_sdk.frameworks.Security
-          darwin.apple_sdk.frameworks.Foundation
-        ]);
+        darwinInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin (
+          with pkgs;
+          [
+            darwin.apple_sdk.frameworks.Security
+            darwin.apple_sdk.frameworks.Foundation
+          ]
+        );
 
-        sysroot = pkgs.lib.optionals pkgs.stdenv.isDarwin "--sysroot $SDKROOT";
+        sysroot = pkgs.lib.optionalString pkgs.stdenv.isDarwin "--sysroot $SDKROOT";
 
         packages.default = packages.zacho;
         packages.zacho = pkgs.stdenv.mkDerivation {
@@ -59,5 +72,6 @@
 
         # For compatibility with older versions of the `nix` binary
         devShell = self.devShells.${system}.default;
-      });
+      }
+    );
 }
