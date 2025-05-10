@@ -1,5 +1,5 @@
 .{
-    .name = "zacho",
+    .name = .zacho,
     .version = "0.0.1",
 
     .dependencies = .{
@@ -10,4 +10,5 @@
     },
 
     .paths = .{""},
+    .fingerprint = 0xcc62770afa9dbb56,
 }
