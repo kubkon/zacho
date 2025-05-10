@@ -1764,14 +1764,14 @@ fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, c
             });
         },
         .frame => |frame| {
-            inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).@"struct".fields) |field| {
                 try writer.print(prefix ++ "{s: <12} {}\n", .{
                     field.name,
                     @field(frame.x_reg_pairs, field.name) == 0b1,
                 });
             }
 
-            inline for (@typeInfo(@TypeOf(frame.d_reg_pairs)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(frame.d_reg_pairs)).@"struct".fields) |field| {
                 try writer.print(prefix ++ "{s: <12} {}\n", .{
                     field.name,
                     @field(frame.d_reg_pairs, field.name) == 0b1,
@@ -1798,7 +1798,7 @@ fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype,
 
     switch (enc) {
         .frameless => |frameless| {
-            inline for (@typeInfo(@TypeOf(frameless)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(frameless)).@"struct".fields) |field| {
                 try writer.print(prefix ++ "{s: <12} {x}\n", .{
                     field.name,
                     @field(frameless, field.name),
@@ -1806,7 +1806,7 @@ fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype,
             }
         },
         .frame => |frame| {
-            inline for (@typeInfo(@TypeOf(frame)).Struct.fields) |field| {
+            inline for (@typeInfo(@TypeOf(frame)).@"struct".fields) |field| {
                 try writer.print(prefix ++ "{s: <12} {x}\n", .{
                     field.name,
                     @field(frame, field.name),
@@ -2092,7 +2092,7 @@ fn formatCodeSignatureData(
             macho.CSMAGIC_BLOBWRAPPER => {
                 const signature = ptr[8..length2];
 
-                if (comptime builtin.target.isDarwin()) {
+                if (comptime builtin.target.os.tag.isDarwin()) {
                     const cd: []const u8 = blk: {
                         const cd_blob = blobs.items[0];
                         const cd_header = data[cd_blob.offset..][0..8];

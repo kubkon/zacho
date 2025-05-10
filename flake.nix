@@ -5,7 +5,7 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     zig.url = "github:mitchellh/zig-overlay";
-    zls.url = "github:zigtools/zls/a26718049a8657d4da04c331aeced1697bc7652b";
+    zls.url = "github:zigtools/zls";
 
     # Used for shell.nix
     flake-compat = {
@@ -39,7 +39,7 @@
         pkgs = import nixpkgs { inherit overlays system; };
       in
       rec {
-        commonInputs = with pkgs; [ zigpkgs."0.13.0" ] ++ darwinInputs;
+        commonInputs = with pkgs; [ zigpkgs."0.14.0" ] ++ darwinInputs;
 
         darwinInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin (
           with pkgs;
