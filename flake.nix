@@ -5,7 +5,7 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     zig.url = "github:mitchellh/zig-overlay";
-    zls.url = "github:zigtools/zls";
+    zls.url = "github:zigtools/zls/7485feeeda45d1ad09422ae83af73307ab9e6c9e";
 
     # Used for shell.nix
     flake-compat = {
