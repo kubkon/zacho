@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         .optimize = mode,
     });
 
-    if (comptime builtin.target.os.tag.isDarwin()) {
+    if ((comptime builtin.target.os.tag.isDarwin()) and target.result.os.tag.isDarwin()) {
         const zig_kit = b.dependency("zigkit", .{
             .target = target,
             .optimize = mode,
