@@ -111,7 +111,7 @@ pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
         }
         end += 1;
         const string = data[start..end];
-        try writer.print("{s}\n", .{std.fmt.fmtSliceEscapeLower(string)});
+        try writer.print("{f}\n", .{std.ascii.hexEscape(string, .lower)});
         start = end;
     }
 }
@@ -136,11 +136,11 @@ fn fmtBlobHex(blob: []const u8, writer: anytype) !void {
         @memcpy(hex_buf[0..end], blob[i .. i + end]);
         var j: usize = 0;
         while (j < step) : (j += 4) {
-            try writer.print("{x:<8} ", .{std.fmt.fmtSliceHexLower(hex_buf[j .. j + 4])});
+            try writer.print("{f:<8} ", .{std.ascii.hexEscape(hex_buf[j .. j + 4], .lower)});
         }
         _ = try std.fmt.bufPrint(&str_buf, "{s}", .{&hex_buf});
         std.mem.replaceScalar(u8, &str_buf, 0, '.');
-        try writer.print("{s}\n", .{std.fmt.fmtSliceEscapeLower(&str_buf)});
+        try writer.print("{f}\n", .{std.ascii.hexEscape(&str_buf, .lower)});
     }
 }
 
@@ -581,7 +581,7 @@ fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64),
             macho.REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
                 const start = creader.bytes_read;
-                offset = try std.leb.readULEB128(u64, reader);
+                offset = try std.leb.readUleb128(u64, reader);
                 const end = creader.bytes_read;
 
                 if (self.verbose) {
@@ -602,14 +602,14 @@ fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64),
                 }
             },
             macho.REBASE_OPCODE_ADD_ADDR_ULEB => {
-                const addend = try std.leb.readULEB128(u64, reader);
+                const addend = try std.leb.readUleb128(u64, reader);
                 offset += addend;
                 if (self.verbose) {
                     try writer.print(fmt_value, .{ byte, "REBASE_OPCODE_ADD_ADDR_ULEB", "addr", addend });
                 }
             },
             macho.REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB => {
-                const addend = try std.leb.readULEB128(u64, reader);
+                const addend = try std.leb.readUleb128(u64, reader);
 
                 if (self.verbose) {
                     // TODO clean up formatting
@@ -648,7 +648,7 @@ fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64),
                         }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES => {
-                        ntimes = try std.leb.readULEB128(u64, reader);
+                        ntimes = try std.leb.readUleb128(u64, reader);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
                                 byte,
@@ -659,9 +659,9 @@ fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64),
                         }
                     },
                     macho.REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB => {
-                        ntimes = try std.leb.readULEB128(u64, reader);
+                        ntimes = try std.leb.readUleb128(u64, reader);
                         const start = creader.bytes_read;
-                        skip = try std.leb.readULEB128(u64, reader);
+                        skip = try std.leb.readUleb128(u64, reader);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
                                 byte,
@@ -824,7 +824,7 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
             macho.BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB => {
                 seg_id = imm;
                 const start = creader.bytes_read;
-                offset = try std.leb.readULEB128(u64, reader);
+                offset = try std.leb.readUleb128(u64, reader);
                 const end = creader.bytes_read;
 
                 if (self.verbose) {
@@ -871,7 +871,7 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
                 }
             },
             macho.BIND_OPCODE_SET_ADDEND_SLEB => {
-                addend = try std.leb.readILEB128(i64, reader);
+                addend = try std.leb.readIleb128(i64, reader);
                 if (self.verbose) {
                     try writer.print(fmt_value, .{
                         byte,
@@ -882,7 +882,7 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
                 }
             },
             macho.BIND_OPCODE_ADD_ADDR_ULEB => {
-                const x = try std.leb.readULEB128(u64, reader);
+                const x = try std.leb.readUleb128(u64, reader);
                 if (self.verbose) {
                     try writer.print(fmt_value, .{ byte, "BIND_OPCODE_ADD_ADDR_ULEB", "addr", x });
                 }
@@ -904,7 +904,7 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
                         }
                     },
                     macho.BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB => {
-                        add_addr = try std.leb.readULEB128(u64, reader);
+                        add_addr = try std.leb.readUleb128(u64, reader);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
                                 byte,
@@ -926,9 +926,9 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
                         }
                     },
                     macho.BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB => {
-                        count = try std.leb.readULEB128(u64, reader);
+                        count = try std.leb.readUleb128(u64, reader);
                         const start = creader.bytes_read;
-                        skip = try std.leb.readULEB128(u64, reader);
+                        skip = try std.leb.readUleb128(u64, reader);
                         if (self.verbose) {
                             try writer.print(fmt_value, .{
                                 byte,
@@ -1036,11 +1036,11 @@ const TrieIterator = struct {
         return std.io.fixedBufferStream(it.data[it.pos..]);
     }
 
-    fn readULEB128(it: *TrieIterator) !u64 {
+    fn readUleb128(it: *TrieIterator) !u64 {
         var stream = it.getStream();
         var creader = std.io.countingReader(stream.reader());
         const reader = creader.reader();
-        const value = try std.leb.readULEB128(u64, reader);
+        const value = try std.leb.readUleb128(u64, reader);
         it.pos += creader.bytes_read;
         return value;
     }
@@ -1114,14 +1114,14 @@ fn parseTrieNode(
     writer: anytype,
 ) !void {
     const start = it.pos;
-    const size = try it.readULEB128();
+    const size = try it.readUleb128();
     if (verbose) try writer.print("0x{x:0>8}  size: {d}\n", .{ start, size });
     if (size > 0) {
-        const flags = try it.readULEB128();
+        const flags = try it.readUleb128();
         if (verbose) try writer.print("{s: >12}flags: 0x{x}\n", .{ "", flags });
         switch (flags) {
             macho.EXPORT_SYMBOL_FLAGS_REEXPORT => {
-                const ord = try it.readULEB128();
+                const ord = try it.readUleb128();
                 const name = try arena.dupe(u8, try it.readString());
                 if (verbose) {
                     try writer.print("{s: >12}ordinal: {d}\n", .{ "", ord });
@@ -1134,8 +1134,8 @@ fn parseTrieNode(
                 });
             },
             macho.EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER => {
-                const stub_offset = try it.readULEB128();
-                const resolver_offset = try it.readULEB128();
+                const stub_offset = try it.readUleb128();
+                const resolver_offset = try it.readUleb128();
                 if (verbose) {
                     try writer.print("{s: >12}stub_offset: 0x{x}\n", .{ "", stub_offset });
                     try writer.print("{s: >12}resolver_offset: 0x{x}\n", .{ "", resolver_offset });
@@ -1150,7 +1150,7 @@ fn parseTrieNode(
                 });
             },
             else => {
-                const vmoff = try it.readULEB128();
+                const vmoff = try it.readUleb128();
                 if (verbose) try writer.print("{s: >12}vmoffset: 0x{x}\n", .{ "", vmoff });
                 try exports.append(.{
                     .name = prefix,
@@ -1176,7 +1176,7 @@ fn parseTrieNode(
 
     for (0..nedges) |i| {
         const label = try it.readString();
-        const off = try it.readULEB128();
+        const off = try it.readUleb128();
         if (verbose) try writer.print("{s: >12}label: {s}\n", .{ "", label });
         if (verbose) try writer.print("{s: >12}next: 0x{x}\n", .{ "", off });
         edges[i] = .{ .off = off, .label = label };
@@ -2062,8 +2062,8 @@ fn formatCodeSignatureData(
                             },
                             .op_platform => {
                                 const platform = try reader.readInt(i32, .big);
-                                try writer.print("\n    {x}", .{
-                                    std.fmt.fmtSliceHexLower(mem.asBytes(&platform)),
+                                try writer.print("\n    {f}", .{
+                                    std.ascii.hexEscape(mem.asBytes(&platform), .lower),
                                 });
                             },
                             else => {
@@ -2176,7 +2176,7 @@ fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
         try writer.print(".{d}", .{oid2});
     }
 
-    try writer.print("  ({x})", .{std.fmt.fmtSliceHexLower(data)});
+    try writer.print("  ({f})", .{std.ascii.hexEscape(data, .lower)});
 }
 
 fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: anytype) !void {
@@ -2261,11 +2261,11 @@ fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) 
         }
         @memcpy(&tmp_buf, blob[i .. i + end]);
         try writer.print("{s}{x:<016} {x:<016}", .{
-            pp, std.fmt.fmtSliceHexLower(tmp_buf[0 .. step / 2]), std.fmt.fmtSliceHexLower(tmp_buf[step / 2 .. step]),
+            pp, tmp_buf[0 .. step / 2], tmp_buf[step / 2 .. step],
         });
         if (opts.fmt_as_str) {
             if (opts.escape_str) {
-                try writer.print("  {s}", .{std.fmt.fmtSliceEscapeLower(tmp_buf[0..step])});
+                try writer.print("  {f}", .{std.ascii.hexEscape(tmp_buf[0..step], .lower)});
             } else {
                 try writer.print("  {s}", .{tmp_buf[0..step]});
             }
@@ -2509,7 +2509,7 @@ pub fn printRelocations(self: Object, writer: anytype) !void {
                         3 => "quad",
                     }});
                     try writer.print(" {s: <6}", .{if (rel.r_extern == 0) "false" else "true"});
-                    try writer.print(" {s: <8}", .{fmtRelocType(rel.r_type, self.arch)});
+                    try writer.print(" {f: <8}", .{fmtRelocType(rel.r_type, self.arch)});
                     try writer.print(" {s: <9}", .{"false"});
 
                     if (isArm64Addend(rel.r_type, self.arch)) {
@@ -2581,7 +2581,7 @@ fn hasAddendInCode(r_type: u8, arch: Arch) bool {
     };
 }
 
-fn fmtRelocType(r_type: u8, arch: Arch) std.fmt.Formatter(formatRelocType) {
+fn fmtRelocType(r_type: u8, arch: Arch) std.fmt.Formatter(FmtRelocTypeCtx, formatRelocType) {
     return .{ .data = .{
         .r_type = r_type,
         .arch = arch,
@@ -2593,15 +2593,9 @@ const FmtRelocTypeCtx = struct {
     arch: Arch,
 };
 
-fn formatRelocType(
-    ctx: FmtRelocTypeCtx,
-    comptime unused_fmt_string: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = unused_fmt_string;
-    const len = switch (ctx.arch) {
-        .aarch64 => blk: {
+fn formatRelocType(ctx: FmtRelocTypeCtx, writer: *std.Io.Writer) !void {
+    switch (ctx.arch) {
+        .aarch64 => {
             const r_type = switch (@as(macho.reloc_type_arm64, @enumFromInt(ctx.r_type))) {
                 .ARM64_RELOC_UNSIGNED => "UNSIGND",
                 .ARM64_RELOC_SUBTRACTOR => "SUB",
@@ -2616,9 +2610,8 @@ fn formatRelocType(
                 .ARM64_RELOC_ADDEND => "ADDEND",
             };
             try writer.print("{s}", .{r_type});
-            break :blk r_type.len;
         },
-        .x86_64 => blk: {
+        .x86_64 => {
             const r_type = switch (@as(macho.reloc_type_x86_64, @enumFromInt(ctx.r_type))) {
                 .X86_64_RELOC_UNSIGNED => "UNSIGND",
                 .X86_64_RELOC_SUBTRACTOR => "SUB",
@@ -2632,21 +2625,8 @@ fn formatRelocType(
                 .X86_64_RELOC_TLV => "TLV",
             };
             try writer.print("{s}", .{r_type});
-            break :blk r_type.len;
         },
         .unknown => unreachable,
-    };
-    if (options.width) |width| {
-        if (width > len) {
-            const padding = width - len;
-            // TODO I have no idea what I'm doing here!
-            var fill_buffer: [4]u8 = undefined;
-            const fill = if (std.unicode.utf8Encode(options.fill, &fill_buffer)) |l|
-                fill_buffer[0..l]
-            else |_|
-                @panic("impossible to apply fmt fill!");
-            try writer.writeBytesNTimes(fill, padding);
-        }
     }
 }
 
