@@ -132,8 +132,10 @@ pub fn main() !void {
     defer file.close();
     const data = try file.readToEndAlloc(arena, std.math.maxInt(u32));
 
-    var fw = std.fs.File.stdout().writer(&[0]u8{});
+    var buffer: [1024]u8 = undefined;
+    var fw = std.fs.File.stdout().writer(&buffer);
     var stdout = &fw.interface;
+    defer stdout.flush() catch fatal("could not write to stdout", .{});
     if (print_matrix.isUnset()) fatal("no option specified", .{});
 
     if (try fat.isFatLibrary(fname)) {

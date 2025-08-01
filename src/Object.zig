@@ -2509,7 +2509,7 @@ pub fn printRelocations(self: Object, writer: anytype) !void {
                         3 => "quad",
                     }});
                     try writer.print(" {s: <6}", .{if (rel.r_extern == 0) "false" else "true"});
-                    try writer.print(" {f: <8}", .{fmtRelocType(rel.r_type, self.arch)});
+                    try writer.print(" {f}", .{fmtRelocType(rel.r_type, self.arch, 8)});
                     try writer.print(" {s: <9}", .{"false"});
 
                     if (isArm64Addend(rel.r_type, self.arch)) {
@@ -2581,21 +2581,23 @@ fn hasAddendInCode(r_type: u8, arch: Arch) bool {
     };
 }
 
-fn fmtRelocType(r_type: u8, arch: Arch) std.fmt.Formatter(FmtRelocTypeCtx, formatRelocType) {
+fn fmtRelocType(r_type: u8, arch: Arch, width: usize) std.fmt.Formatter(FmtRelocTypeCtx, formatRelocType) {
     return .{ .data = .{
         .r_type = r_type,
         .arch = arch,
+        .width = width,
     } };
 }
 
 const FmtRelocTypeCtx = struct {
     r_type: u8,
     arch: Arch,
+    width: usize,
 };
 
 fn formatRelocType(ctx: FmtRelocTypeCtx, writer: *std.Io.Writer) !void {
-    switch (ctx.arch) {
-        .aarch64 => {
+    const len = switch (ctx.arch) {
+        .aarch64 => blk: {
             const r_type = switch (@as(macho.reloc_type_arm64, @enumFromInt(ctx.r_type))) {
                 .ARM64_RELOC_UNSIGNED => "UNSIGND",
                 .ARM64_RELOC_SUBTRACTOR => "SUB",
@@ -2610,8 +2612,9 @@ fn formatRelocType(ctx: FmtRelocTypeCtx, writer: *std.Io.Writer) !void {
                 .ARM64_RELOC_ADDEND => "ADDEND",
             };
             try writer.print("{s}", .{r_type});
+            break :blk r_type.len;
         },
-        .x86_64 => {
+        .x86_64 => blk: {
             const r_type = switch (@as(macho.reloc_type_x86_64, @enumFromInt(ctx.r_type))) {
                 .X86_64_RELOC_UNSIGNED => "UNSIGND",
                 .X86_64_RELOC_SUBTRACTOR => "SUB",
@@ -2625,8 +2628,14 @@ fn formatRelocType(ctx: FmtRelocTypeCtx, writer: *std.Io.Writer) !void {
                 .X86_64_RELOC_TLV => "TLV",
             };
             try writer.print("{s}", .{r_type});
+            break :blk r_type.len;
         },
         .unknown => unreachable,
+    };
+    if (ctx.width > len) {
+        const padding = ctx.width - len;
+        const slice = try writer.writableSlice(padding);
+        @memset(slice, ' ');
     }
 }
 
