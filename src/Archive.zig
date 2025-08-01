@@ -10,11 +10,12 @@ verbose: bool = false,
 pub fn isArchive(path: []const u8, fat_arch: ?fat.Arch) !bool {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
-    if (fat_arch) |arch| {
-        try file.seekTo(arch.offset);
-    }
-    const magic = file.reader().readBytesNoEof(ARMAG.len) catch return false;
-    if (!mem.eql(u8, &magic, ARMAG)) return false;
+    var buffer: [SARMAG]u8 = undefined;
+    const offset = if (fat_arch) |arch| arch.offset else 0;
+    const nread = try file.preadAll(&buffer, offset);
+    if (nread != buffer.len) return error.InputOutput;
+    const magic = buffer[0..SARMAG];
+    if (!mem.eql(u8, magic, ARMAG)) return false;
     return true;
 }
 
@@ -267,6 +268,7 @@ const Symtab = struct {
 };
 
 const ARMAG = "!<arch>\n";
+const SARMAG: u4 = 8;
 const ARFMAG = "`\n";
 const SYMDEF = "__.SYMDEF";
 const SYMDEF64 = "__.SYMDEF_64";

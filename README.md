@@ -35,9 +35,11 @@ General options:
 
 ## Building from source
 
-Building from source requires [Zig 0.14](https://ziglang.org/download/).
+Building from source requires nightly [Zig](https://ziglang.org/download/).
 
 ```
 $ git clone https://github.com/kubkon/zacho.git
 $ zig build
 ```
+
+Additionally, on macOS, you will need to provide Foundation and Security frameworks.

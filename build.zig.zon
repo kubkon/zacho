@@ -4,8 +4,8 @@
 
     .dependencies = .{
         .zigkit = .{
-            .url = "https://github.com/kubkon/ZigKit/archive/b9a7c13bef81b32d2df0ccc78994001c795ef805.tar.gz",
-            .hash = "12202be412cdb2f1165af1c6f5ce8a5fc027cde7f2cf6f445ad8408c11abe796d2ff",
+            .url = "https://github.com/kubkon/ZigKit/archive/73336c4bf54238631b95083d3056f11f668f09c6.tar.gz",
+            .hash = "N-V-__8AAFqyAABS4I-SdVGUGsSUFwYaGqg0GBSwS8q7_olQ",
         },
     },
 

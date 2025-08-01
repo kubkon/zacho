@@ -5,11 +5,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "zacho",
+    const main = b.addModule("zacho", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = mode,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "zacho",
+        .root_module = main,
     });
 
     if ((comptime builtin.target.os.tag.isDarwin()) and target.result.os.tag.isDarwin()) {
