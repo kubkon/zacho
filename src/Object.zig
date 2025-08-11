@@ -26,7 +26,7 @@ pub fn deinit(self: *Object) void {
 }
 
 pub fn parse(self: *Object) !void {
-    var stream = std.io.fixedBufferStream(self.data);
+    var stream = std.Io.fixedBufferStream(self.data);
     const reader = stream.reader();
     const header = try reader.readStruct(macho.mach_header_64);
 
@@ -98,7 +98,7 @@ pub fn parse(self: *Object) !void {
     }
 }
 
-pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
+pub fn dumpString(self: Object, sect: macho.section_64, writer: *Writer) !void {
     try writer.print("String dump of section '{s},{s}':\n", .{ sect.segName(), sect.sectName() });
     const data = self.data[sect.offset..][0..sect.size];
     var start: usize = 0;
@@ -116,7 +116,7 @@ pub fn dumpString(self: Object, sect: macho.section_64, writer: anytype) !void {
     }
 }
 
-pub fn dumpHex(self: Object, sect: macho.section_64, writer: anytype) !void {
+pub fn dumpHex(self: Object, sect: macho.section_64, writer: *Writer) !void {
     try writer.print("Hex dump of section '{s},{s}':\n", .{ sect.segName(), sect.sectName() });
     const data = self.data[sect.offset..][0..sect.size];
     try fmtBlobHex(data, writer);
@@ -124,7 +124,7 @@ pub fn dumpHex(self: Object, sect: macho.section_64, writer: anytype) !void {
 
 // Format as 4 hex columns and 1 ascii column.
 // xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-fn fmtBlobHex(blob: []const u8, writer: anytype) !void {
+fn fmtBlobHex(blob: []const u8, writer: *Writer) !void {
     const step = 16;
     var hex_buf: [step]u8 = undefined;
     var str_buf: [step]u8 = undefined;
@@ -144,7 +144,7 @@ fn fmtBlobHex(blob: []const u8, writer: anytype) !void {
     }
 }
 
-pub fn printHeader(self: Object, writer: anytype) !void {
+pub fn printHeader(self: Object, writer: *Writer) !void {
     const header = self.header;
 
     const cputype = switch (header.cputype) {
@@ -225,7 +225,7 @@ pub fn printHeader(self: Object, writer: anytype) !void {
     try writer.writeByte('\n');
 }
 
-pub fn printLoadCommands(self: Object, writer: anytype) !void {
+pub fn printLoadCommands(self: Object, writer: *Writer) !void {
     const fmt = struct {
         pub fn fmt(comptime specifier: []const u8) []const u8 {
             return "  {s: <20} {" ++ specifier ++ ": >30}\n";
@@ -276,30 +276,30 @@ pub fn printLoadCommands(self: Object, writer: anytype) !void {
     }
 }
 
-fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printGenericLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     try writer.print(f.fmt("s"), .{ "Command:", @tagName(lc.cmd()) });
     try writer.print(f.fmt("x"), .{ "Command size:", lc.cmdsize() });
 }
 
-fn printSourceVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printSourceVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.source_version_command).?;
     try writer.print(f.fmt("d"), .{ "Version:", cmd.version });
 }
 
-fn printDylinkerLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printDylinkerLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.dylinker_command).?;
     const data = lc.data[cmd.name..];
     const name = mem.sliceTo(data, 0);
     try writer.print(f.fmt("s"), .{ "Dynamic linker:", name });
 }
 
-fn printEntryPointLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printEntryPointLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.entry_point_command).?;
     try writer.print(f.fmt("x"), .{ "Entry offset:", cmd.entryoff });
     try writer.print(f.fmt("d"), .{ "Initial stack size:", cmd.stacksize });
 }
 
-fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.symtab_command).?;
     try writer.print(f.fmt("x"), .{ "Symtab offset:", cmd.symoff });
     try writer.print(f.fmt("d"), .{ "Number of symbols:", cmd.nsyms });
@@ -307,7 +307,7 @@ fn printSymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: 
     try writer.print(f.fmt("d"), .{ "Strtab size:", cmd.strsize });
 }
 
-fn printDysymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printDysymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.dysymtab_command).?;
     try writer.print(f.fmt("d"), .{ "Local syms index:", cmd.ilocalsym });
     try writer.print(f.fmt("d"), .{ "Number of locals:", cmd.nlocalsym });
@@ -329,7 +329,7 @@ fn printDysymtabLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer
     try writer.print(f.fmt("d"), .{ "Locrel entries:", cmd.nlocrel });
 }
 
-fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.build_version_command).?;
     try writer.print(f.fmt("s"), .{ "Platform:", @tagName(cmd.platform) });
     try writer.print(f.fmt("d"), .{ "Min OS version:", cmd.minos });
@@ -346,25 +346,25 @@ fn printBuildVersionLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, wr
     }
 }
 
-fn printVersionMinLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printVersionMinLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.version_min_command).?;
     try writer.print(f.fmt("d"), .{ "Version:", cmd.version });
     try writer.print(f.fmt("d"), .{ "SDK version:", cmd.sdk });
 }
 
-fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printRpathLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const rpath = lc.getRpathPathName();
     try writer.print(f.fmt("s"), .{ "Path:", rpath });
 }
 
-fn printUuidLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printUuidLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.uuid_command).?;
     var buffer: [64]u8 = undefined;
     const encoded = std.base64.standard.Encoder.encode(&buffer, &cmd.uuid);
     try writer.print(f.fmt("s"), .{ "UUID:", encoded });
 }
 
-fn printDylibLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printDylibLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const name = lc.getDylibPathName();
     const cmd = lc.cast(macho.dylib_command).?;
     try writer.print(f.fmt("s"), .{ "Name:", name });
@@ -373,7 +373,7 @@ fn printDylibLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: a
     try writer.print(f.fmt("d"), .{ "Compat version:", cmd.dylib.compatibility_version });
 }
 
-fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.dyld_info_command).?;
     try writer.print(f.fmt("x"), .{ "Rebase offset:", cmd.rebase_off });
     try writer.print(f.fmt("x"), .{ "Rebase size:", cmd.rebase_size });
@@ -387,13 +387,13 @@ fn printDyldInfoOnlyLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, wr
     try writer.print(f.fmt("x"), .{ "Export size:", cmd.export_size });
 }
 
-fn printLinkeditDataLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printLinkeditDataLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const cmd = lc.cast(macho.linkedit_data_command).?;
     try writer.print(f.fmt("x"), .{ "Data offset:", cmd.dataoff });
     try writer.print(f.fmt("x"), .{ "Data size:", cmd.datasize });
 }
 
-fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: anytype) !void {
+fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer: *Writer) !void {
     const seg = lc.cast(macho.segment_command_64).?;
     try writer.print(f.fmt("s"), .{ "Segment name:", seg.segName() });
     try writer.print(f.fmt("x"), .{ "VM address:", seg.vmaddr });
@@ -425,7 +425,7 @@ fn printSegmentLC(f: anytype, lc: macho.LoadCommandIterator.LoadCommand, writer:
     }
 }
 
-fn printProtectionFlags(comptime f: []const u8, flags: macho.vm_prot_t, writer: anytype) !void {
+fn printProtectionFlags(comptime f: []const u8, flags: macho.vm_prot_t, writer: *Writer) !void {
     if (flags == macho.PROT.NONE) try writer.print(f, .{"VM_PROT_NONE"});
     if (flags & macho.PROT.READ != 0) try writer.print(f, .{"VM_PROT_READ"});
     if (flags & macho.PROT.WRITE != 0) try writer.print(f, .{"VM_PROT_WRITE"});
@@ -433,7 +433,7 @@ fn printProtectionFlags(comptime f: []const u8, flags: macho.vm_prot_t, writer: 
     if (flags & macho.PROT.COPY != 0) try writer.print(f, .{"VM_PROT_COPY"});
 }
 
-fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void {
+fn printSectionHeader(f: anytype, sect: macho.section_64, writer: *Writer) !void {
     try writer.print(f.fmt("s"), .{ "Section name:", sect.sectName() });
     try writer.print(f.fmt("s"), .{ "Segment name:", sect.segName() });
     try writer.print(f.fmt("x"), .{ "Address:", sect.addr });
@@ -499,7 +499,7 @@ fn printSectionHeader(f: anytype, sect: macho.section_64, writer: anytype) !void
     try writer.print(f.fmt("x"), .{ "Reserved 3:", sect.reserved3 });
 }
 
-pub fn printDyldInfo(self: Object, writer: anytype) !void {
+pub fn printDyldInfo(self: Object, writer: *Writer) !void {
     const lc = self.dyld_info_only_lc orelse {
         return writer.writeAll("LC_DYLD_INFO_ONLY load command not found\n");
     };
@@ -529,7 +529,7 @@ pub fn printDyldInfo(self: Object, writer: anytype) !void {
     }
 }
 
-fn printRebaseInfo(self: Object, data: []const u8, writer: anytype) !void {
+fn printRebaseInfo(self: Object, data: []const u8, writer: *Writer) !void {
     var rebases = std.ArrayList(u64).init(self.gpa);
     defer rebases.deinit();
     try self.parseRebaseInfo(data, &rebases, writer);
@@ -539,7 +539,7 @@ fn printRebaseInfo(self: Object, data: []const u8, writer: anytype) !void {
     }
 }
 
-fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64), writer: anytype) !void {
+fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64), writer: *Writer) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -704,7 +704,7 @@ fn parseRebaseInfo(self: Object, data: []const u8, rebases: *std.ArrayList(u64),
     }
 }
 
-fn printBindInfo(self: Object, data: []const u8, writer: anytype) !void {
+fn printBindInfo(self: Object, data: []const u8, writer: *Writer) !void {
     var bindings = std.ArrayList(Binding).init(self.gpa);
     defer bindings.deinit();
     try self.parseBindInfo(data, &bindings, writer);
@@ -745,7 +745,7 @@ const Binding = struct {
     };
 };
 
-fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Binding), writer: anytype) !void {
+fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Binding), writer: *Writer) !void {
     var stream = std.io.fixedBufferStream(data);
     var creader = std.io.countingReader(stream.reader());
     const reader = creader.reader();
@@ -978,7 +978,12 @@ fn parseBindInfo(self: Object, data: []const u8, bindings: *std.ArrayList(Bindin
     }
 }
 
-pub fn printExportsTrie(self: Object, writer: anytype) !void {
+pub fn printChainedFixups(self: Object, writer: *Writer) !void {
+    _ = self;
+    try writer.writeAll("\nDisplaying chained fixups is not implemented yet.\n");
+}
+
+pub fn printExportsTrie(self: Object, writer: *Writer) !void {
     const maybe_data = if (self.dyld_info_only_lc) |lc|
         self.data[lc.export_off..][0..lc.export_size]
     else if (self.dyld_exports_trie_lc) |lc|
@@ -1111,7 +1116,7 @@ fn parseTrieNode(
     prefix: []const u8,
     exports: *std.ArrayList(Export),
     verbose: bool,
-    writer: anytype,
+    writer: *Writer,
 ) !void {
     const start = it.pos;
     const size = try it.readUleb128();
@@ -1234,7 +1239,7 @@ fn getUnwindInfoTargetNameAndAddend(
     }
 }
 
-pub fn printUnwindInfo(self: *const Object, writer: anytype) !void {
+pub fn printUnwindInfo(self: *const Object, writer: *Writer) !void {
     const is_obj = self.header.filetype == macho.MH_OBJECT;
 
     if (is_obj) {
@@ -1747,7 +1752,7 @@ pub fn printUnwindInfo(self: *const Object, writer: anytype) !void {
     }
 }
 
-fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, comptime opts: struct {
+fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: *Writer, comptime opts: struct {
     prefix: usize = 0,
 }) !void {
     const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
@@ -1787,7 +1792,7 @@ fn formatCompactUnwindEncodingArm64(enc: UnwindEncodingArm64, writer: anytype, c
     }
 }
 
-fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype, comptime opts: struct {
+fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: *Writer, comptime opts: struct {
     prefix: usize = 0,
 }) !void {
     const prefix: [opts.prefix]u8 = [_]u8{' '} ** opts.prefix;
@@ -1822,7 +1827,7 @@ fn formatCompactUnwindEncodingX86_64(enc: UnwindEncodingX86_64, writer: anytype,
     }
 }
 
-pub fn printCodeSignature(self: Object, writer: anytype) !void {
+pub fn printCodeSignature(self: Object, writer: *Writer) !void {
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
         .CODE_SIGNATURE => return self.formatCodeSignatureData(lc.cast(macho.linkedit_data_command).?, writer),
@@ -1834,7 +1839,7 @@ pub fn printCodeSignature(self: Object, writer: anytype) !void {
 fn formatCodeSignatureData(
     self: Object,
     csig: macho.linkedit_data_command,
-    writer: anytype,
+    writer: *Writer,
 ) !void {
     const start_pos = csig.dataoff;
     const end_pos = csig.dataoff + csig.datasize;
@@ -2143,7 +2148,7 @@ fn parseReqData(buf: []const u8, reader: anytype) ![]const u8 {
     return data;
 }
 
-fn fmtReqData(buf: []const u8, reader: anytype, writer: anytype) !void {
+fn fmtReqData(buf: []const u8, reader: anytype, writer: *Writer) !void {
     const data = try parseReqData(buf, reader);
     try writer.print("\n      {s}", .{data});
 }
@@ -2162,7 +2167,7 @@ fn getOid(buf: []const u8, pos: *usize) usize {
     return q;
 }
 
-fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
+fn fmtCssmData(buf: []const u8, reader: anytype, writer: *Writer) !void {
     const data = try parseReqData(buf, reader);
 
     var pos: usize = 0;
@@ -2179,13 +2184,13 @@ fn fmtCssmData(buf: []const u8, reader: anytype, writer: anytype) !void {
     try writer.print("  ({f})", .{std.ascii.hexEscape(data, .lower)});
 }
 
-fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: anytype) !void {
+fn fmtReqTimestamp(buf: []const u8, reader: anytype, writer: *Writer) !void {
     _ = buf;
     const ts = try reader.readInt(i64, .big);
     try writer.print("\n      {d}", .{ts});
 }
 
-fn fmtReqMatch(buf: []const u8, reader: anytype, writer: anytype) !void {
+fn fmtReqMatch(buf: []const u8, reader: anytype, writer: *Writer) !void {
     const match = @as(MatchOperation, @enumFromInt(try reader.readInt(u32, .big)));
     try writer.print("\n    {}", .{match});
     switch (match) {
@@ -2246,7 +2251,7 @@ const FmtBinaryBlobOpts = struct {
     escape_str: bool = false,
 };
 
-fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: anytype) !void {
+fn formatBinaryBlob(blob: []const u8, opts: FmtBinaryBlobOpts, writer: *Writer) !void {
     // Format as 16-by-16-by-8 with two left column in hex, and right in ascii:
     // xxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxx  xxxxxxxx
     var i: usize = 0;
@@ -2328,7 +2333,7 @@ pub const EXPR_OP_GENERIC_SKIP: u32 = 0x40;
 pub const LEAF_CERT = 0;
 pub const ROOT_CERT = -1;
 
-pub fn verifyMemoryLayout(self: Object, writer: anytype) !void {
+pub fn verifyMemoryLayout(self: Object, writer: *Writer) !void {
     var segments = std.ArrayList(macho.segment_command_64).init(self.gpa);
     defer segments.deinit();
 
@@ -2468,7 +2473,7 @@ pub fn verifyMemoryLayout(self: Object, writer: anytype) !void {
     }
 }
 
-pub fn printRelocations(self: Object, writer: anytype) !void {
+pub fn printRelocations(self: Object, writer: *Writer) !void {
     var has_relocs = false;
     var it = self.getLoadCommandsIterator();
     while (it.next()) |lc| switch (lc.cmd()) {
@@ -2639,7 +2644,7 @@ fn formatRelocType(ctx: FmtRelocTypeCtx, writer: *std.Io.Writer) !void {
     }
 }
 
-pub fn printSymbolTable(self: Object, writer: anytype) !void {
+pub fn printSymbolTable(self: Object, writer: *Writer) !void {
     if (self.symtab_lc == null) {
         try writer.writeAll("\nNo symbol table found in the object file.\n");
         return;
@@ -2731,7 +2736,7 @@ pub fn printSymbolTable(self: Object, writer: anytype) !void {
     }
 }
 
-pub fn printStringTable(self: Object, writer: anytype) !void {
+pub fn printStringTable(self: Object, writer: *Writer) !void {
     if (self.symtab_lc == null or self.symtab_lc.?.strsize == 0) {
         try writer.writeAll("\nNo string table found in the object file.\n");
         return;
@@ -2753,7 +2758,7 @@ pub fn printStringTable(self: Object, writer: anytype) !void {
     }
 }
 
-pub fn printIndirectSymbolTable(self: Object, writer: anytype) !void {
+pub fn printIndirectSymbolTable(self: Object, writer: *Writer) !void {
     if (self.dysymtab_lc == null or self.dysymtab_lc.?.nindirectsyms == 0) {
         try writer.writeAll("\nNo indirect symbol table found in the object file.\n");
         return;
@@ -2798,7 +2803,7 @@ pub fn printIndirectSymbolTable(self: Object, writer: anytype) !void {
     }
 }
 
-pub fn printDataInCode(self: Object, writer: anytype) !void {
+pub fn printDataInCode(self: Object, writer: *Writer) !void {
     const lc = self.data_in_code_lc orelse {
         try writer.writeAll("\nNo data-in-code entries found in the object file.\n");
         return;
@@ -3262,10 +3267,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const fs = std.fs;
-const io = std.io;
 const mem = std.mem;
 const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
 const ZigKit = @import("ZigKit");
 const CMSDecoder = ZigKit.Security.CMSDecoder;
+const Writer = std.Io.Writer;

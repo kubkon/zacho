@@ -85,6 +85,8 @@ pub fn main() !void {
             fatal(usage, .{});
         } else if (p.flag2("code-signature")) {
             print_matrix.code_signature = true;
+        } else if (p.flag2("chained-fixups")) {
+            print_matrix.chained_fixups = true;
         } else if (p.flag2("dyld-info")) {
             print_matrix.dyld_info = true;
         } else if (p.flag2("exports-trie")) {
@@ -163,7 +165,7 @@ pub fn main() !void {
     }
 }
 
-fn printObject(object: Object, print_matrix: PrintMatrix, sect_name: ?[]const u8, stdout: anytype) !void {
+fn printObject(object: Object, print_matrix: PrintMatrix, sect_name: ?[]const u8, stdout: *std.Io.Writer) !void {
     if (print_matrix.header) {
         try object.printHeader(stdout);
     }
@@ -172,6 +174,9 @@ fn printObject(object: Object, print_matrix: PrintMatrix, sect_name: ?[]const u8
     }
     if (print_matrix.dyld_info) {
         try object.printDyldInfo(stdout);
+    }
+    if (print_matrix.chained_fixups) {
+        try object.printChainedFixups(stdout);
     }
     if (print_matrix.exports_trie) {
         try object.printExportsTrie(stdout);
@@ -231,6 +236,7 @@ const PrintMatrix = packed struct {
     header: bool = false,
     load_commands: bool = false,
     dyld_info: bool = false,
+    chained_fixups: bool = false,
     exports_trie: bool = false,
     unwind_info: bool = false,
     code_signature: bool = false,

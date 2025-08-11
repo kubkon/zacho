@@ -73,7 +73,7 @@ pub fn parse(self: *Archive) !void {
     }
 }
 
-pub fn printSymbolTable(self: Archive, writer: anytype) !void {
+pub fn printSymbolTable(self: Archive, writer: *std.Io.Writer) !void {
     if (self.symtab.entries.items.len == 0) {
         return writer.writeAll("no index found in archive\n");
     }
@@ -169,14 +169,7 @@ const ar_hdr = extern struct {
         return error.MalformedArchive;
     }
 
-    pub fn format(
-        self: ar_hdr,
-        comptime unused_fmt_string: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = unused_fmt_string;
-        _ = options;
+    pub fn format(self: ar_hdr, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ar_name: {s} ({x})\n", .{
             std.fmt.fmtSliceEscapeLower(&self.ar_name),
             std.fmt.fmtSliceHexLower(&self.ar_name),
